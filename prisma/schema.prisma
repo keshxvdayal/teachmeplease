@@ -1,0 +1,152 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// All timestamps are stored in UTC (Postgres timestamptz).
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  // Plan id from src/lib/config/plans.ts. Payments are out of scope; every user is "free" for now.
+  planId       String   @default("free")
+  createdAt    DateTime @default(now()) @db.Timestamptz
+
+  authSessions AuthSession[]
+  sessions     PracticeSession[]
+}
+
+model AuthSession {
+  id        String   @id @default(uuid())
+  // SHA-256 of the cookie token; the raw token is never stored.
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @db.Timestamptz
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@index([userId])
+}
+
+model AnonymousVisitor {
+  id        String   @id @default(uuid())
+  // HMAC of the client IP, used to cap anonymous usage when cookies are cleared.
+  ipHash    String
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  sessions PracticeSession[]
+
+  @@index([ipHash, createdAt])
+}
+
+enum SessionStatus {
+  active
+  scoring
+  scored
+  scoring_failed
+  insufficient
+  abandoned
+}
+
+model PracticeSession {
+  id              String            @id @default(uuid())
+  userId          String?
+  user            User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anonId          String?
+  anon            AnonymousVisitor? @relation(fields: [anonId], references: [id], onDelete: SetNull)
+  // Denormalised so anonymous limits survive the visitor row being cleaned up.
+  ipHash          String?
+  trackId         String
+  scenarioId      String
+  scenarioVersion Int
+  language        String
+  speechLocale    String?
+  status          SessionStatus     @default(active)
+  maxTurns        Int
+  userTurns       Int               @default(0)
+  // Simple row lock that serialises AI calls per session across instances.
+  lockedUntil     DateTime?         @db.Timestamptz
+  scoringAttempts Int               @default(0)
+  scoringStartedAt DateTime?        @db.Timestamptz
+  scorecard       Json?
+  overallScore    Float?
+  goalAchievement String?
+  scoringVersion  String?
+  model           String?
+  statusDetail    String?
+  startedAt       DateTime          @default(now()) @db.Timestamptz
+  endedAt         DateTime?         @db.Timestamptz
+  completedAt     DateTime?         @db.Timestamptz
+
+  messages Message[]
+
+  @@index([userId, startedAt])
+  @@index([anonId, startedAt])
+  @@index([ipHash, startedAt])
+  @@index([startedAt])
+}
+
+enum Speaker {
+  user
+  ai
+}
+
+model Message {
+  id              String          @id @default(uuid())
+  sessionId       String
+  session         PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  speaker         Speaker
+  text            String
+  // 0 = AI opening line; user turn N is answered by AI turn N.
+  turn            Int
+  inputMode       String?
+  clientMessageId String?
+  createdAt       DateTime        @default(now()) @db.Timestamptz
+
+  @@unique([sessionId, clientMessageId])
+  @@index([sessionId, createdAt])
+}
+
+model WaitlistEntry {
+  id        String   @id @default(uuid())
+  email     String
+  trackId   String
+  consent   Boolean  @default(false)
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@unique([email, trackId])
+}
+
+model UsageEvent {
+  id           String   @id @default(uuid())
+  kind         String // "roleplay" | "scoring"
+  actorType    String // "anonymous" | "user"
+  sessionId    String?
+  provider     String
+  model        String
+  ok           Boolean
+  errorCode    String?
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  latencyMs    Int      @default(0)
+  estCostUsd   Float    @default(0)
+  createdAt    DateTime @default(now()) @db.Timestamptz
+
+  @@index([createdAt])
+  @@index([kind, createdAt])
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(uuid())
+  name      String
+  actorType String
+  props     Json?
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@index([name, createdAt])
+}

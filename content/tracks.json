@@ -1,0 +1,26 @@
+[
+  {
+    "id": "client-communication",
+    "title": "Client Communication",
+    "description": "Negotiate pricing, handle difficult clients and follow up on overdue payments.",
+    "audience": "Freelancers, consultants and agency owners",
+    "status": "active",
+    "order": 1
+  },
+  {
+    "id": "career-readiness",
+    "title": "Career & Interview Readiness",
+    "description": "Job interviews, HR conversations, salary negotiation and workplace communication.",
+    "audience": "Students, graduates and early-career professionals",
+    "status": "coming_soon",
+    "order": 2
+  },
+  {
+    "id": "hospitality-aviation",
+    "title": "Hospitality & Aviation",
+    "description": "Customer service, difficult passengers, service recovery and hospitality interviews.",
+    "audience": "Hospitality and airline aspirants",
+    "status": "coming_soon",
+    "order": 3
+  }
+]
