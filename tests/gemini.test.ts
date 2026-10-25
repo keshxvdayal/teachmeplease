@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GeminiProvider } from "@/lib/ai/gemini";
+import { GeminiProvider, thinkingConfigFor } from "@/lib/ai/gemini";
 import { LLMError } from "@/lib/ai";
 
 const req = { system: "sys", turns: [{ role: "user" as const, text: "hi" }], temperature: 0.5, maxOutputTokens: 100, timeoutMs: 1000 };
@@ -66,6 +66,45 @@ describe("GeminiProvider", () => {
   it("treats empty or blocked responses as errors", async () => {
     await expect(providerReturning(ok({ candidates: [] })).generate(req)).rejects.toBeInstanceOf(LLMError);
     await expect(providerReturning(ok({ promptFeedback: { blockReason: "SAFETY" } })).generate(req)).rejects.toMatchObject({ code: "blocked" });
+  });
+
+  it("falls back to the second model when the first is rate limited", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return url.includes("gemini-2.5-flash:")
+        ? new Response("{}", { status: 429 })
+        : ok({ candidates: [{ content: { parts: [{ text: "from fallback" }] } }] });
+    }) as unknown as typeof fetch;
+    const p = new GeminiProvider("key", "gemini-2.5-flash", fetchImpl, "gemini-3.5-flash-lite");
+    const r = await p.generate({ ...req, thinkingBudget: 0 });
+    expect(r.text).toBe("from fallback");
+    expect(r.model).toBe("gemini-3.5-flash-lite");
+    expect(urls).toHaveLength(2);
+  });
+
+  it("does not fall back on errors a second model can't fix", async () => {
+    const fetchImpl = (async () => new Response("", { status: 403 })) as unknown as typeof fetch;
+    await expect(new GeminiProvider("key", "a", fetchImpl, "b").generate(req)).rejects.toMatchObject({ code: "config" });
+  });
+
+  it("uses thinking levels for Gemini 3 and budgets for 2.5", () => {
+    expect(thinkingConfigFor("gemini-2.5-flash", 0)).toEqual({ thinkingBudget: 0 });
+    expect(thinkingConfigFor("gemini-3.5-flash-lite", 0)).toEqual({ thinkingLevel: "low" });
+    expect(thinkingConfigFor("gemini-3.5-flash-lite", 1024)).toBeUndefined();
+    expect(thinkingConfigFor("gemini-2.5-flash", undefined)).toBeUndefined();
+  });
+
+  it("treats a reply cut off at the token limit as invalid and gives Gemini 3 thinking headroom", async () => {
+    const seen: any = {};
+    const p = providerReturning(ok({ candidates: [{ content: { parts: [{ text: '{"reply' }] }, finishReason: "MAX_TOKENS" }] }), seen);
+    await expect(p.generate(req)).rejects.toMatchObject({ code: "invalid_response" });
+    const p3 = new GeminiProvider("key", "gemini-3.5-flash-lite", (async (_u: string, init: RequestInit) => {
+      seen.body = JSON.parse(String(init.body));
+      return ok({ candidates: [{ content: { parts: [{ text: "x" }] } }] });
+    }) as unknown as typeof fetch);
+    await p3.generate(req);
+    expect(seen.body.generationConfig.maxOutputTokens).toBeGreaterThan(req.maxOutputTokens);
   });
 
   it("refuses to run without an API key", async () => {

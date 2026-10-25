@@ -7,6 +7,8 @@ import { canAccess, ownedBy, type Actor } from "@/lib/auth/identity";
 import { getScenario, localizedPersona, toPublicScenario } from "@/lib/scenarios";
 import type { PublicScenario, Scenario } from "@/lib/scenarios/schema";
 import { generateClientReply } from "@/lib/roleplay/engine";
+import { generateHint, type Hint } from "@/lib/roleplay/hint";
+import { isMood, type Mood } from "@/lib/roleplay/moods";
 import { generateScorecard } from "@/lib/scoring/engine";
 import { scorecardSchema, type Scorecard } from "@/lib/scoring/schema";
 import { assertCanSendMessage, assertCanStartSession } from "@/lib/usage/limits";
@@ -19,6 +21,8 @@ export interface MessageView {
   speaker: "user" | "ai";
   text: string;
   turn: number;
+  /** AI messages only. */
+  mood: Mood | null;
   createdAt: string;
 }
 
@@ -37,6 +41,9 @@ export interface SessionView {
   pendingRetry: { clientMessageId: string; text: string } | null;
   scorecard: Scorecard | null;
   scoringAttemptsLeft: number;
+  hintsLeft: number;
+  /** The client's current mood (latest AI reply, or the scenario's opening mood). */
+  clientMood: Mood;
   startedAt: string;
   completedAt: string | null;
 }
@@ -46,6 +53,7 @@ function toView(session: PracticeSession & { messages: Message[] }, scenario: Sc
   const messages = [...session.messages].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const last = messages[messages.length - 1];
   const parsedScorecard = session.scorecard ? scorecardSchema.safeParse(session.scorecard) : null;
+  const lastMood = [...messages].reverse().find((m) => m.speaker === "ai" && isMood(m.mood))?.mood;
   return {
     id: session.id,
     status: session.status,
@@ -61,12 +69,16 @@ function toView(session: PracticeSession & { messages: Message[] }, scenario: Sc
       speaker: m.speaker,
       text: m.text,
       turn: m.turn,
+      // privateNotes is deliberately never included.
+      mood: m.speaker === "ai" && isMood(m.mood) ? m.mood : null,
       createdAt: m.createdAt.toISOString(),
     })),
     pendingRetry:
       last?.speaker === "user" && last.clientMessageId ? { clientMessageId: last.clientMessageId, text: last.text } : null,
     scorecard: parsedScorecard?.success ? parsedScorecard.data : null,
     scoringAttemptsLeft: Math.max(0, limits.scoringAttemptsPerSession - session.scoringAttempts),
+    hintsLeft: Math.max(0, limits.hintsPerSession - session.hintsUsed),
+    clientMood: isMood(lastMood) ? lastMood : scenario.opening_mood,
     startedAt: session.startedAt.toISOString(),
     completedAt: session.completedAt?.toISOString() ?? null,
   };
@@ -119,7 +131,7 @@ export async function createSession(
       language: input.language,
       speechLocale,
       maxTurns: scenario.max_turns,
-      messages: { create: { speaker: "ai", text: persona.openingLine, turn: 0 } },
+      messages: { create: { speaker: "ai", text: persona.openingLine, turn: 0, mood: scenario.opening_mood } },
     },
     include: { messages: true },
   });
@@ -198,9 +210,16 @@ export async function sendMessage(
       messages.push(userMessage);
     }
 
+    const lastAi = [...messages].reverse().find((m) => m.speaker === "ai");
+    const state = {
+      mood: isMood(lastAi?.mood) ? lastAi.mood : scenario.opening_mood,
+      notes: lastAi?.privateNotes ?? null,
+    };
+
     let reply;
     try {
       reply = await generateClientReply({
+        state,
         scenario,
         language: session.language as ConversationLanguage,
         transcript: messages.map((m) => ({ speaker: m.speaker, text: m.text })),
@@ -215,7 +234,14 @@ export async function sendMessage(
     }
 
     await db.message.create({
-      data: { sessionId: session.id, speaker: "ai", text: reply.reply, turn: userMessage.turn },
+      data: {
+        sessionId: session.id,
+        speaker: "ai",
+        text: reply.reply,
+        turn: userMessage.turn,
+        mood: reply.mood,
+        privateNotes: reply.notes,
+      },
     });
     const fresh = await loadOwned(actor, id);
     return { session: toView(fresh, scenario), wantsToEnd: reply.wantsToEnd };
@@ -272,6 +298,7 @@ export async function requestScorecard(actor: Actor, id: string): Promise<Sessio
       scenario,
       language: session.language as ConversationLanguage,
       messages: messages.map((m) => ({ speaker: m.speaker, text: m.text, turn: m.turn })),
+      hintsUsed: session.hintsUsed,
       sessionId: session.id,
       actorType: actor.type,
     });
@@ -298,6 +325,34 @@ export async function requestScorecard(actor: Actor, id: string): Promise<Sessio
   }
 
   return getSessionView(actor, id);
+}
+
+export async function requestHint(actor: Actor, id: string): Promise<{ hint: Hint; hintsLeft: number }> {
+  const session = await loadOwned(actor, id);
+  if (session.status !== "active") throw new AppError("conflict", "This practice session has already ended.");
+  if (session.hintsUsed >= limits.hintsPerSession) {
+    throw new AppError("limit_reached", "You've used all the hints for this session. Trust your instincts!");
+  }
+  const messages = [...session.messages].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  if (messages[messages.length - 1]?.speaker !== "ai") {
+    throw new AppError("busy", "Wait for the client's reply before asking for a hint.");
+  }
+
+  const hint = await generateHint({
+    scenario: scenarioFor(session),
+    language: session.language as ConversationLanguage,
+    transcript: messages.map((m) => ({ speaker: m.speaker, text: m.text })),
+    sessionId: session.id,
+    actorType: actor.type,
+  });
+
+  // Count the hint only once it was delivered; the condition keeps concurrent requests within the limit.
+  const updated = await db.practiceSession.updateMany({
+    where: { id: session.id, hintsUsed: { lt: limits.hintsPerSession } },
+    data: { hintsUsed: { increment: 1 } },
+  });
+  if (updated.count === 0) throw new AppError("limit_reached", "You've used all the hints for this session.");
+  return { hint, hintsLeft: Math.max(0, limits.hintsPerSession - session.hintsUsed - 1) };
 }
 
 export async function abandonSession(actor: Actor, id: string): Promise<void> {

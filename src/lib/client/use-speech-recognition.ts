@@ -47,12 +47,23 @@ function getCtor(): RecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+export interface RecognitionOptions {
+  /** Hands-free mode: stop automatically after this much silence once the user has spoken. */
+  autoStopAfterSilenceMs?: number;
+  /** Stop if nothing at all is heard within this time. */
+  noSpeechTimeoutMs?: number;
+}
+
 /**
- * Push-to-talk speech recognition. Final text is delivered via onFinal when the user stops,
+ * Push-to-talk or hands-free speech recognition. Final text is delivered via onFinal when the user stops,
  * so it can be edited before sending. Android Chrome duplicates results in continuous mode,
  * so there we run single-shot sessions and restart them while the user is still talking.
  */
-export function useSpeechRecognition(locale: string, onFinal: (text: string) => void, onError?: (kind: VoiceErrorKind) => void) {
+export function useSpeechRecognition(
+  locale: string,
+  onFinal: (text: string) => void,
+  onError?: (kind: VoiceErrorKind) => void,
+) {
   const [supported, setSupported] = useState<boolean | null>(null);
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
@@ -64,12 +75,23 @@ export function useSpeechRecognition(locale: string, onFinal: (text: string) => 
   const gotAnythingRef = useRef(false);
   const onFinalRef = useRef(onFinal);
   const onErrorRef = useRef(onError);
+  const optionsRef = useRef<RecognitionOptions>({});
+  const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noSpeechTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopRef = useRef<() => void>(() => undefined);
+
+  const clearTimers = () => {
+    if (silenceTimer.current) clearTimeout(silenceTimer.current);
+    if (noSpeechTimer.current) clearTimeout(noSpeechTimer.current);
+    silenceTimer.current = noSpeechTimer.current = null;
+  };
   onFinalRef.current = onFinal;
   onErrorRef.current = onError;
 
   useEffect(() => setSupported(getCtor() !== null), []);
 
   const fail = useCallback((kind: VoiceErrorKind) => {
+    clearTimers();
     wantRef.current = false;
     setError(kind);
     setListening(false);
@@ -78,6 +100,7 @@ export function useSpeechRecognition(locale: string, onFinal: (text: string) => 
   }, []);
 
   const finish = useCallback(() => {
+    clearTimers();
     setListening(false);
     setInterim("");
     const text = finalRef.current.trim();
@@ -86,10 +109,16 @@ export function useSpeechRecognition(locale: string, onFinal: (text: string) => 
     else if (!gotAnythingRef.current) setError((e) => e ?? "no-speech");
   }, []);
 
-  const start = useCallback(() => {
+  const start = useCallback((options: RecognitionOptions = {}) => {
     const Ctor = getCtor();
     if (!Ctor) return fail("unsupported");
     if (wantRef.current) return;
+    optionsRef.current = options;
+    if (options.noSpeechTimeoutMs) {
+      noSpeechTimer.current = setTimeout(() => {
+        if (!gotAnythingRef.current && !finalRef.current) stopRef.current();
+      }, options.noSpeechTimeoutMs);
+    }
     setError(null);
     finalRef.current = "";
     gotAnythingRef.current = false;
@@ -118,6 +147,17 @@ export function useSpeechRecognition(locale: string, onFinal: (text: string) => 
           }
         }
         setInterim(interimText);
+        // Any speech counts as activity: cancel the no-speech timer and restart the silence timer.
+        if (noSpeechTimer.current) {
+          clearTimeout(noSpeechTimer.current);
+          noSpeechTimer.current = null;
+        }
+        gotAnythingRef.current = gotAnythingRef.current || interimText.trim().length > 0;
+        const silence = optionsRef.current.autoStopAfterSilenceMs;
+        if (silence) {
+          if (silenceTimer.current) clearTimeout(silenceTimer.current);
+          silenceTimer.current = setTimeout(() => stopRef.current(), silence);
+        }
       };
       rec.onerror = (e) => {
         switch (e.error) {
@@ -166,6 +206,7 @@ export function useSpeechRecognition(locale: string, onFinal: (text: string) => 
   }, [locale, fail, finish]);
 
   const stop = useCallback(() => {
+    clearTimers();
     wantRef.current = false;
     const rec = recRef.current;
     if (rec) {
@@ -179,8 +220,11 @@ export function useSpeechRecognition(locale: string, onFinal: (text: string) => 
     }
   }, [finish]);
 
+  stopRef.current = stop;
+
   useEffect(
     () => () => {
+      clearTimers();
       wantRef.current = false;
       recRef.current?.abort();
     },

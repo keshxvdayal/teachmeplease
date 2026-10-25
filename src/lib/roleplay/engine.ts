@@ -3,8 +3,10 @@ import type { ConversationLanguage } from "@/lib/config/languages";
 import { localizedPersona } from "@/lib/scenarios";
 import type { Scenario } from "@/lib/scenarios/schema";
 import type { ChatTurn } from "@/lib/ai";
+import { AppError } from "@/lib/errors";
 import { callModel, type ActorType } from "@/lib/usage/tracking";
-import { buildRoleplaySystemPrompt, roleplayOutputSchema } from "./prompt";
+import { buildRoleplaySystemPrompt, roleplayOutputSchema, type ClientState } from "./prompt";
+import { isMood, stepMood, type Mood } from "./moods";
 
 export interface TranscriptEntry {
   speaker: "user" | "ai";
@@ -13,12 +15,16 @@ export interface TranscriptEntry {
 
 export interface ClientReply {
   reply: string;
+  mood: Mood;
+  notes: string | null;
   wantsToEnd: boolean;
   model: string;
 }
 
+const MAX_NOTES_CHARS = 500;
+
+// Signs the model has stepped out of character. (Echoing a user's words like "system prompt" is fine.)
 const LEAK_PATTERNS = [
-  /system prompt/i,
   /\bmy (private |hidden )?(instructions|goal|constraints)\b/i,
   /\b(ai_goal|behavior_rules|ai_constraints|scoring_criteria|success_conditions)\b/,
   /\bas an ai\b/i,
@@ -56,11 +62,16 @@ function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function parseRoleplayOutput(text: string): { reply: string; end: boolean } | null {
+export function parseRoleplayOutput(text: string): { reply: string; end: boolean; mood: Mood | null; notes: string | null } | null {
   try {
-    const obj = JSON.parse(text) as { reply?: unknown; end_conversation?: unknown };
+    const obj = JSON.parse(text) as { reply?: unknown; end_conversation?: unknown; mood?: unknown; notes?: unknown };
     if (typeof obj.reply !== "string" || !obj.reply.trim()) return null;
-    return { reply: obj.reply, end: obj.end_conversation === true };
+    return {
+      reply: obj.reply,
+      end: obj.end_conversation === true,
+      mood: isMood(obj.mood) ? obj.mood : null,
+      notes: typeof obj.notes === "string" && obj.notes.trim() ? obj.notes.trim().slice(0, MAX_NOTES_CHARS) : null,
+    };
   } catch {
     return null;
   }
@@ -74,12 +85,14 @@ export async function generateClientReply(args: {
   maxTurns: number;
   sessionId: string;
   actorType: ActorType;
+  state?: ClientState;
 }): Promise<ClientReply> {
   const persona = localizedPersona(args.scenario, args.language);
   const system = buildRoleplaySystemPrompt(args.scenario, args.language, {
     userTurn: args.userTurn,
     maxTurns: args.maxTurns,
-  });
+  }, args.state);
+  const previousMood = args.state?.mood ?? args.scenario.opening_mood;
   const turns: ChatTurn[] = args.transcript.map((m) => ({
     role: m.speaker === "ai" ? "assistant" : "user",
     text: m.text,
@@ -98,14 +111,32 @@ export async function generateClientReply(args: {
 
   // One corrective retry if the output is malformed or breaks character.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await callModel(ctx, request);
+    let result;
+    try {
+      result = await callModel(ctx, request);
+    } catch (err) {
+      if (attempt === 0 && err instanceof AppError && err.code === "ai_invalid_response") continue;
+      throw err;
+    }
     const parsed = parseRoleplayOutput(result.text);
     if (parsed) {
       const reply = sanitizeReply(parsed.reply, persona.name);
       if (reply && !looksLikeLeak(reply)) {
-        return { reply, wantsToEnd: parsed.end || args.userTurn >= args.maxTurns, model: result.model };
+        return {
+          reply,
+          mood: parsed.mood ? stepMood(previousMood, parsed.mood) : previousMood,
+          notes: parsed.notes ?? args.state?.notes ?? null,
+          wantsToEnd: parsed.end || args.userTurn >= args.maxTurns,
+          model: result.model,
+        };
       }
     }
   }
-  return { reply: FALLBACK_LINES[args.language], wantsToEnd: false, model: "fallback" };
+  return {
+    reply: FALLBACK_LINES[args.language],
+    mood: previousMood,
+    notes: args.state?.notes ?? null,
+    wantsToEnd: false,
+    model: "fallback",
+  };
 }

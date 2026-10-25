@@ -4,7 +4,7 @@ import { AppError } from "@/lib/errors";
 import { startOfUtcDay, secondsUntilUtcMidnight } from "@/lib/time";
 import { getProvider, LLMError, type GenerateRequest, type GenerateResult } from "@/lib/ai";
 
-export type UsageKind = "roleplay" | "scoring";
+export type UsageKind = "roleplay" | "scoring" | "hint";
 export type ActorType = "anonymous" | "user";
 
 interface CallContext {

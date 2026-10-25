@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
-import { ScenarioCard } from "@/components/scenario-card";
+import { ScenarioGrid } from "@/components/scenario-grid";
 import { getActiveScenarios, getTrack, toPublicScenario } from "@/lib/scenarios";
 
 export const metadata: Metadata = { title: "Choose a scenario" };
@@ -30,16 +30,10 @@ export default function PracticePage() {
             Choose a <span className="font-serif font-normal italic text-gradient">scenario.</span>
           </h1>
           <p className="mt-4 max-w-2xl text-lg text-ink-2">
-            The AI plays a fictional client with their own goals. You play the freelancer. Each session is 5–8 turns, then you get
-            feedback.
+            The AI plays a fictional client with their own goals and moods. You play the freelancer. Each session is 5–7 replies,
+            then you get feedback. New to this? Start with a beginner scenario.
           </p>
-          <div className="mt-12 grid gap-6 md:grid-cols-3">
-            {scenarios.map((s, i) => (
-              <div key={s.id} className="grid animate-rise" style={{ animationDelay: `${i * 90}ms` }}>
-                <ScenarioCard scenario={s} cta="View briefing" />
-              </div>
-            ))}
-          </div>
+          <ScenarioGrid scenarios={scenarios} />
         </div>
       </main>
       <SiteFooter />

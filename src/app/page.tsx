@@ -9,7 +9,7 @@ import { HeroPreview } from "@/components/landing/hero-preview";
 import { WaitlistForm } from "@/components/landing/waitlist-form";
 import { ScenarioCard } from "@/components/scenario-card";
 import { ScoreBars } from "@/components/scorecard/score-bars";
-import { getActiveScenarios, getTracks, toPublicScenario } from "@/lib/scenarios";
+import { getActiveScenarios, getFeaturedScenarios, getTracks, toPublicScenario } from "@/lib/scenarios";
 
 const steps = [
   {
@@ -54,7 +54,8 @@ function Eyebrow({ children, light = false }: { children: React.ReactNode; light
 }
 
 export default function HomePage() {
-  const scenarios = getActiveScenarios().map((s) => toPublicScenario(s));
+  const scenarios = getFeaturedScenarios().map((s) => toPublicScenario(s));
+  const totalScenarios = getActiveScenarios().length;
   const upcoming = getTracks().filter((t) => t.status === "coming_soon");
 
   return (
@@ -200,7 +201,7 @@ export default function HomePage() {
                 </p>
               </div>
               <ButtonLink href="/practice" variant="secondary" className="shrink-0">
-                All scenarios <ArrowRight className="size-4" aria-hidden />
+                All {totalScenarios} scenarios <ArrowRight className="size-4" aria-hidden />
               </ButtonLink>
             </div>
             <div className="mt-12 grid gap-6 md:grid-cols-3">

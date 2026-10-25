@@ -20,6 +20,7 @@ export const limits = {
   // Hard ceiling regardless of what a scenario file asks for.
   maxTurnsCeiling: intFromEnv("LIMIT_MAX_TURNS_CEILING", 10),
   scoringAttemptsPerSession: intFromEnv("LIMIT_SCORING_ATTEMPTS", 3),
+  hintsPerSession: intFromEnv("LIMIT_HINTS_PER_SESSION", 2),
   // How long a per-session lock is held while an AI call is in flight.
   sessionLockMs: 45_000,
   roleplayTimeoutMs: 20_000,

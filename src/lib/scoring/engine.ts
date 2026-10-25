@@ -49,13 +49,14 @@ export async function generateScorecard(args: {
   scenario: Scenario;
   language: ConversationLanguage;
   messages: ScoringMessage[];
+  hintsUsed?: number;
   sessionId: string;
   actorType: ActorType;
 }): Promise<ScoringOutcome> {
   const ctx = { kind: "scoring" as const, actorType: args.actorType, sessionId: args.sessionId };
   const request = {
     system: buildScoringSystemPrompt(args.scenario, args.language),
-    turns: [{ role: "user" as const, text: formatTranscript(args.scenario, args.language, args.messages) }],
+    turns: [{ role: "user" as const, text: formatTranscript(args.scenario, args.language, args.messages, args.hintsUsed ?? 0) }],
     temperature: 0.2,
     maxOutputTokens: 4096,
     timeoutMs: limits.scoringTimeoutMs,

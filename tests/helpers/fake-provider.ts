@@ -20,7 +20,7 @@ export class FakeProvider implements LLMProvider {
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
     this.calls.push(req);
-    const step = this.queue.shift() ?? JSON.stringify({ reply: "That's still too expensive for us.", end_conversation: false });
+    const step = this.queue.shift() ?? JSON.stringify({ reply: "That's still too expensive for us.", mood: "skeptical", notes: "", end_conversation: false });
     if (step instanceof LLMError) throw step;
     const text = typeof step === "function" ? step(req) : step;
     return { text, model: this.model, inputTokens: 100, outputTokens: 20, latencyMs: 5 };

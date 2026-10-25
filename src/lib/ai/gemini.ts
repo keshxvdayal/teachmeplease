@@ -39,13 +39,30 @@ interface GeminiResponse {
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
 }
 
+const isGemini3Plus = (model: string) => /^gemini-[3-9]/.test(model);
+
+// Gemini 3.x always reasons a little, and that counts against maxOutputTokens.
+const THINKING_HEADROOM_TOKENS = 1536;
+
+/** Gemini 3.x models take a thinking *level*; 2.x models take a token budget. */
+export function thinkingConfigFor(model: string, budget: number | undefined) {
+  if (budget === undefined) return undefined;
+  if (isGemini3Plus(model)) return budget <= 0 ? { thinkingLevel: "low" } : undefined;
+  return { thinkingBudget: budget };
+}
+
 export class GeminiProvider implements LLMProvider {
   readonly name = "gemini";
 
+  /**
+   * @param fallbackModel optional second model used when the primary is rate limited or
+   *   unavailable — useful on the free tier, where each model has its own small daily quota.
+   */
   constructor(
     private readonly apiKey: string,
     readonly model: string,
     private readonly fetchImpl: typeof fetch = fetch,
+    readonly fallbackModel?: string,
   ) {}
 
   estimateCostUsd(inputTokens: number, outputTokens: number): number {
@@ -54,6 +71,16 @@ export class GeminiProvider implements LLMProvider {
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
+    try {
+      return await this.generateWith(this.model, req);
+    } catch (err) {
+      const switchable = err instanceof LLMError && (err.code === "rate_limited" || err.code === "unavailable");
+      if (!switchable || !this.fallbackModel || this.fallbackModel === this.model) throw err;
+      return this.generateWith(this.fallbackModel, req);
+    }
+  }
+
+  private async generateWith(model: string, req: GenerateRequest): Promise<GenerateResult> {
     if (!this.apiKey) throw new LLMError("config", "GEMINI_API_KEY is not set");
 
     const body = {
@@ -64,12 +91,12 @@ export class GeminiProvider implements LLMProvider {
       })),
       generationConfig: {
         temperature: req.temperature,
-        maxOutputTokens: req.maxOutputTokens,
+        maxOutputTokens: req.maxOutputTokens + (isGemini3Plus(model) ? THINKING_HEADROOM_TOKENS : 0),
         ...(req.jsonSchema && {
           responseMimeType: "application/json",
           responseSchema: toGeminiSchema(req.jsonSchema),
         }),
-        ...(req.thinkingBudget !== undefined && { thinkingConfig: { thinkingBudget: req.thinkingBudget } }),
+        ...(thinkingConfigFor(model, req.thinkingBudget) && { thinkingConfig: thinkingConfigFor(model, req.thinkingBudget) }),
       },
     };
 
@@ -79,7 +106,7 @@ export class GeminiProvider implements LLMProvider {
 
     let res: Response;
     try {
-      res = await this.fetchImpl(`${API_BASE}/${encodeURIComponent(this.model)}:generateContent`, {
+      res = await this.fetchImpl(`${API_BASE}/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
         body: JSON.stringify(body),
@@ -97,6 +124,7 @@ export class GeminiProvider implements LLMProvider {
       throw new LLMError("rate_limited", "Gemini rate limit reached", Number.isFinite(retryAfter) ? retryAfter : 20);
     }
     if (res.status === 401 || res.status === 403) throw new LLMError("config", `Gemini rejected the API key (${res.status})`);
+    if (res.status === 404) throw new LLMError("unavailable", `Gemini model "${model}" is not available`);
     if (res.status === 400) {
       const detail = await res.text().catch(() => "");
       throw new LLMError("invalid_response", `Gemini rejected the request: ${detail.slice(0, 300)}`);
@@ -118,12 +146,14 @@ export class GeminiProvider implements LLMProvider {
       .join("")
       .trim();
     if (candidate?.finishReason === "SAFETY") throw new LLMError("blocked", "Response blocked by safety filters");
+    // A reply cut off at the token limit is unusable (and invalid JSON for structured output).
+    if (candidate?.finishReason === "MAX_TOKENS") throw new LLMError("invalid_response", "Response was cut off at the token limit");
     if (!text) throw new LLMError("invalid_response", `Empty response (finishReason: ${candidate?.finishReason ?? "none"})`);
 
     const usage = data.usageMetadata ?? {};
     return {
       text,
-      model: this.model,
+      model,
       inputTokens: usage.promptTokenCount ?? 0,
       outputTokens: (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0),
       latencyMs: Date.now() - started,

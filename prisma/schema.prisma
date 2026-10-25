@@ -72,6 +72,7 @@ model PracticeSession {
   // Simple row lock that serialises AI calls per session across instances.
   lockedUntil     DateTime?         @db.Timestamptz
   scoringAttempts Int               @default(0)
+  hintsUsed       Int               @default(0)
   scoringStartedAt DateTime?        @db.Timestamptz
   scorecard       Json?
   overallScore    Float?
@@ -105,6 +106,9 @@ model Message {
   // 0 = AI opening line; user turn N is answered by AI turn N.
   turn            Int
   inputMode       String?
+  // AI messages only: the client's mood after this reply, and its private memory (never sent to the browser).
+  mood            String?
+  privateNotes    String?
   clientMessageId String?
   createdAt       DateTime        @default(now()) @db.Timestamptz
 

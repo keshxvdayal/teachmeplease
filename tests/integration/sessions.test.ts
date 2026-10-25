@@ -10,6 +10,7 @@ import {
   deleteAllHistory,
   getSessionView,
   listHistory,
+  requestHint,
   requestScorecard,
   sendMessage,
 } from "@/lib/sessions/service";
@@ -20,7 +21,8 @@ let anonA: Actor;
 let anonB: Actor;
 let userA: Actor;
 
-const reply = (text: string, end = false) => JSON.stringify({ reply: text, end_conversation: end });
+const reply = (text: string, end = false, mood = "skeptical", notes = "") =>
+  JSON.stringify({ reply: text, mood, notes, end_conversation: end });
 const id = () => crypto.randomUUID();
 
 async function expectCode(p: Promise<unknown>, code: string) {
@@ -230,6 +232,43 @@ describe("practice sessions", () => {
       })),
     });
     await expectCode(sendMessage(anonA, s.id, { text: "hi", clientMessageId: id() }), "limit_reached");
+  });
+
+  it("remembers the client's mood and private notes between turns without exposing the notes", async () => {
+    const s = await createSession(anonA, "ip-a", { scenarioId: "pricing-negotiation", language: "en" });
+    expect(s.clientMood).toBe("skeptical");
+    fake.push(reply("Fair point. What would you cut?", false, "warming", "They asked about priorities; I said enquiries matter."));
+    const r = await sendMessage(anonA, s.id, { text: "What matters most to you?", clientMessageId: id() });
+    // skeptical → warming is two steps, so it's limited to one: neutral.
+    expect(r.session.clientMood).toBe("neutral");
+    expect(r.session.messages.at(-1)?.mood).toBe("neutral");
+    expect(JSON.stringify(r.session)).not.toContain("I said enquiries matter");
+
+    await sendMessage(anonA, s.id, { text: "We could phase it.", clientMessageId: id() });
+    const sys = fake.calls.at(-1)!.system;
+    expect(sys).toContain("Mood: neutral");
+    expect(sys).toContain("I said enquiries matter");
+  });
+
+  it("gives at most the configured number of hints and never mid-reply", async () => {
+    const s = await createSession(anonA, "ip-a", { scenarioId: "pricing-negotiation", language: "en" });
+    for (let i = 0; i < limits.hintsPerSession; i++) {
+      fake.push(JSON.stringify({ tip: "Ask about their budget first.", example: "What budget did you have in mind?" }));
+      const h = await requestHint(anonA, s.id);
+      expect(h.hint.tip).toMatch(/budget/);
+      expect(h.hintsLeft).toBe(limits.hintsPerSession - i - 1);
+    }
+    await expectCode(requestHint(anonA, s.id), "limit_reached");
+    expect((await getSessionView(anonA, s.id)).hintsLeft).toBe(0);
+    await expectCode(requestHint(anonB, s.id), "not_found");
+    expect(await db.usageEvent.count({ where: { kind: "hint" } })).toBe(limits.hintsPerSession);
+  });
+
+  it("doesn't use up a hint when the coach fails", async () => {
+    const s = await createSession(anonA, "ip-a", { scenarioId: "pricing-negotiation", language: "en" });
+    fake.push(new LLMError("rate_limited", "429", 5));
+    await expectCode(requestHint(anonA, s.id), "ai_rate_limited");
+    expect((await getSessionView(anonA, s.id)).hintsLeft).toBe(limits.hintsPerSession);
   });
 
   it("deletes a user's history without touching other users' data", async () => {

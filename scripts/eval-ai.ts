@@ -6,13 +6,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { getScenario } from "../src/lib/scenarios";
 import { localizedPersona } from "../src/lib/scenarios";
-import { getProvider, type ChatTurn } from "../src/lib/ai";
+import { getProvider, LLMError, type ChatTurn, type GenerateRequest } from "../src/lib/ai";
 import { buildRoleplaySystemPrompt, roleplayOutputSchema } from "../src/lib/roleplay/prompt";
 import { looksLikeLeak, parseRoleplayOutput, sanitizeReply } from "../src/lib/roleplay/engine";
 import { buildScoringSystemPrompt, formatTranscript, type ScoringMessage } from "../src/lib/scoring/prompt";
 import { buildScorecard } from "../src/lib/scoring/engine";
 import { scorecardJsonSchema } from "../src/lib/scoring/schema";
 import type { ConversationLanguage } from "../src/lib/config/languages";
+import type { ClientState } from "../src/lib/roleplay/prompt";
+import { stepMood } from "../src/lib/roleplay/moods";
 
 interface Case {
   name: string;
@@ -81,6 +83,29 @@ const cases: Case[] = [
     expect: "Replies in Roman-script Hinglish; client admits invoice wasn't submitted; commits to batch date. Goal yes; no penalty for code-switching.",
   },
   {
+    name: "discovery-good",
+    scenario: "discovery-call",
+    language: "en",
+    userTurns: [
+      "Happy to give you a number — I just want it to be the right one. What's prompting the new website now? What's not working today?",
+      "That makes sense. If online cake orders took pressure off your staff, what would that be worth to you? And do you have a budget range in mind?",
+      "Great, that's helpful. When would you ideally like it live, and is anyone else involved in the decision?",
+      "Here's what I heard: online celebration-cake orders first, social later, live before the holidays, roughly 3 to 5 thousand, and your sister signs off. I'll send a proposal by Friday — could we book 20 minutes with both of you next Tuesday?",
+    ],
+    expect: "Client reveals cake orders, budget, deadline, sister. Mood moves toward cooperative. Goal yes.",
+  },
+  {
+    name: "rate-increase-caves",
+    scenario: "rate-increase",
+    language: "en",
+    userTurns: [
+      "Hi Catherine, so, um, sorry to bring this up, but I was thinking I might need to maybe raise my rate a little?",
+      "Oh no, I totally understand about the budget. It's fine, we can keep it as it is for now.",
+      "Yes, no problem at all. Thanks for understanding.",
+    ],
+    expect: "Client happily keeps old rate. Low confidence and closing; goal no.",
+  },
+  {
     name: "payment-early-end",
     scenario: "overdue-payment",
     language: "en",
@@ -89,8 +114,21 @@ const cases: Case[] = [
   },
 ];
 
+/** Free-tier quotas are a few requests per minute, so wait and retry on 429s. */
+async function generate(req: GenerateRequest) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await getProvider().generate(req);
+    } catch (err) {
+      if (!(err instanceof LLMError) || err.code !== "rate_limited" || attempt >= 5) throw err;
+      const wait = Math.max(err.retryAfterSeconds ?? 20, 10);
+      console.log(`   (rate limited — waiting ${wait}s)`);
+      await new Promise((r) => setTimeout(r, wait * 1000));
+    }
+  }
+}
+
 async function run() {
-  const provider = getProvider();
   const filter = process.argv[2];
   const outDir = path.join(process.cwd(), "eval-output");
   fs.mkdirSync(outDir, { recursive: true });
@@ -100,6 +138,8 @@ async function run() {
     const persona = localizedPersona(scenario, c.language);
     const messages: ScoringMessage[] = [{ speaker: "ai", text: persona.openingLine, turn: 0 }];
     const issues: string[] = [];
+    let state: ClientState = { mood: scenario.opening_mood, notes: null };
+    const moods: string[] = [state.mood];
     console.log(`\n=== ${c.name} (${c.scenario}, ${c.language}) ===`);
     console.log(`${persona.name}: ${persona.openingLine}`);
 
@@ -108,8 +148,8 @@ async function run() {
       messages.push({ speaker: "user", text: c.userTurns[i], turn });
       console.log(`You: ${c.userTurns[i]}`);
       const turns: ChatTurn[] = messages.map((m) => ({ role: m.speaker === "ai" ? "assistant" : "user", text: m.text }));
-      const r = await provider.generate({
-        system: buildRoleplaySystemPrompt(scenario, c.language, { userTurn: turn, maxTurns: scenario.max_turns }),
+      const r = await generate({
+        system: buildRoleplaySystemPrompt(scenario, c.language, { userTurn: turn, maxTurns: scenario.max_turns }, state),
         turns,
         temperature: 0.8,
         maxOutputTokens: 400,
@@ -123,10 +163,13 @@ async function run() {
       if (looksLikeLeak(text)) issues.push(`turn ${turn}: possible role break`);
       if (c.language === "hinglish" && /[ऀ-ॿ]/.test(text)) issues.push(`turn ${turn}: Devanagari in Hinglish reply`);
       messages.push({ speaker: "ai", text, turn });
-      console.log(`${persona.name}: ${text}  [${r.latencyMs}ms]`);
+      state = { mood: parsed?.mood ? stepMood(state.mood, parsed.mood) : state.mood, notes: parsed?.notes ?? state.notes };
+      moods.push(state.mood);
+      console.log(`${persona.name} (${state.mood}): ${text}  [${r.latencyMs}ms]`);
+      if (state.notes) console.log(`   notes: ${state.notes}`);
     }
 
-    const s = await provider.generate({
+    const s = await generate({
       system: buildScoringSystemPrompt(scenario, c.language),
       turns: [{ role: "user", text: formatTranscript(scenario, c.language, messages) }],
       temperature: 0.2,
@@ -138,10 +181,11 @@ async function run() {
     const outcome = buildScorecard(s.text, messages, s.model);
     if (!outcome) issues.push("scorecard failed validation");
     console.log("Scorecard:", JSON.stringify(outcome, null, 2));
+    console.log(`Mood path: ${moods.join(" → ")}`);
     console.log(`Expect: ${c.expect}`);
     console.log(issues.length ? `Automatic checks: ${issues.join("; ")}` : "Automatic checks: passed");
 
-    fs.writeFileSync(path.join(outDir, `${c.name}.json`), JSON.stringify({ case: c, messages, outcome, issues }, null, 2));
+    fs.writeFileSync(path.join(outDir, `${c.name}.json`), JSON.stringify({ case: c, messages, moods, outcome, issues }, null, 2));
   }
 }
 

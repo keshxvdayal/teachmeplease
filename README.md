@@ -2,7 +2,22 @@
 
 Practice real-life professional conversations with AI before they happen. Users pick a scenario, talk (voice or text) with an AI client who has their own goals, and get a scorecard with specific, actionable feedback.
 
-**MVP track:** Client Communication: Pricing Negotiation, Difficult Client, Overdue Payment. Languages: English, Hindi, Hinglish.
+**MVP track:** Client Communication, 9 scenarios:
+
+| Beginner | Intermediate | Advanced |
+|---|---|---|
+| First Call with a New Lead | Pricing Negotiation | Difficult Client |
+| Rush Request | Scope Creep | Delivering Bad News (missed deadline) |
+| | Overdue Payment | Unhappy with the Work |
+| | Raising Your Rates | |
+
+Languages: English, Hindi, Hinglish.
+
+**Conversation features**
+- **Client memory and mood.** Each reply returns a mood (frustrated → skeptical → neutral → warming → cooperative) and private notes: offers, numbers, what's been revealed. These are fed back on the next turn. Mood moves at most one step per turn, and the notes are never sent to the browser.
+- **Hands-free voice calls.** The client's reply is spoken, then the mic opens automatically. A 1.5-second pause ends your turn, and you get 2 seconds to edit before it sends. Push-to-talk and typing are always available.
+- **Character voices.** A browser voice is picked to match each persona's gender, with per-character rate and pitch. Speech is split into sentences, because Chrome cuts off long single utterances.
+- **Coach hints.** Up to 2 per session. The coach only sees the user's goal, never the client's hidden information.
 
 ---
 
@@ -40,6 +55,7 @@ Get a Gemini key at https://aistudio.google.com/apikey and put it in `GEMINI_API
 | `GEMINI_API_KEY` | yes | Server-side only. Never prefix with `NEXT_PUBLIC_` |
 | `SESSION_SECRET` | yes (prod) | 32+ random chars; signs cookies, hashes IPs. `openssl rand -base64 32` |
 | `GEMINI_MODEL` | no | Default `gemini-2.5-flash` |
+| `GEMINI_FALLBACK_MODEL` | no | Used automatically when the main model is rate limited or unavailable, e.g. `gemini-3.5-flash-lite`. Each model has its own free-tier quota |
 | `ADMIN_TOKEN` | no | Bearer token for `/api/admin/*` |
 | `APP_URL` | no | Public URL used in metadata |
 | `CONTACT_EMAIL` | no | Shown in footer, privacy policy, terms |
@@ -154,14 +170,15 @@ Store secrets in App Settings or Key Vault, never in the repo.
 
 One 7-turn session is about 9 Gemini calls: roughly 17k input tokens and 2k output tokens, including scoring with a small thinking budget.
 
-- **Free tier:** $0. The free tier has per-minute and per-day request quotas (check AI Studio for current values), which allow on the order of a few dozen sessions a day in total. `LIMIT_GLOBAL_AI_REQUESTS_PER_DAY` (default 240) stops the app before the quota is exhausted and shows a friendly message.
+- **Free tier:** $0, but small. As of October 2026, `gemini-2.5-flash` allows **20 requests per day per project**, about 2 sessions, plus a few requests per minute. Set `GEMINI_FALLBACK_MODEL` to spread load across models' separate quotas. Check https://ai.dev/rate-limit for current values. `LIMIT_GLOBAL_AI_REQUESTS_PER_DAY` (default 240) is an app-wide safety cap.
 - **Paid tier** at 2.5 Flash list prices ($0.30/M input, $2.50/M output): about **$0.01 per session**, or about $10 per 1,000 sessions.
 - **Hosting:** about $15–40/month (small container + B1ms Postgres).
 
 ## Known limitations and next steps
 
 - **Gemini free-tier data use:** on the unpaid tier Google may use prompts and responses to improve its products. Move to a paid tier before real users and confirm the current terms. The privacy policy already discloses AI processing.
-- **Free-tier quota** caps total daily usage, as described in the cost estimate above.
+- **The free-tier quota is too small for real users** (see the cost estimate above). Enable billing before a pilot.
+- **Fallback model quality:** `gemini-3.5-flash-lite` stays in character and scores sensibly in our evals, but is lighter than 2.5 Flash. Spot-check it with `npm run eval:ai`.
 - **Voice** depends on the browser. Chrome desktop and Android work best, and Firefox has no speech recognition (text works everywhere). Chrome's recognition audio goes to Google's speech service. Hindi text-to-speech needs a Hindi voice on the device.
 - **Hinglish** speech recognition is imperfect (users can edit before sending). Validate Hindi and Hinglish roleplay quality with native speakers before marketing it.
 - **Auth** is email + password only. Google sign-in, password reset and email verification are not built yet. Password reset needs an email provider.

@@ -59,6 +59,10 @@ export function getTrack(id: string): Track | undefined {
   return catalog().tracks.find((t) => t.id === id);
 }
 
+export function getFeaturedScenarios(): Scenario[] {
+  return catalog().scenarios.filter((s) => s.is_active && s.featured);
+}
+
 export function getActiveScenarios(trackId?: string): Scenario[] {
   return catalog().scenarios.filter((s) => s.is_active && (!trackId || s.track_id === trackId));
 }
@@ -93,6 +97,8 @@ export function toPublicScenario(s: Scenario, language?: ConversationLanguage): 
     personaRole: persona.role,
     personaDescription: s.persona_description,
     personalityTraits: s.personality_traits,
+    voice: s.voice,
+    openingMood: s.opening_mood,
     languageModes: s.language_modes,
     defaultLanguage: s.default_language,
     maxTurns: s.max_turns,

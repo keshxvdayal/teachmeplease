@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MOODS } from "@/lib/roleplay/moods";
 
 const languageId = z.enum(["en", "hi", "hinglish"]);
 
@@ -25,6 +26,7 @@ export const scenarioSchema = z
     version: z.number().int().min(1),
     track_id: nonEmpty,
     is_active: z.boolean(),
+    featured: z.boolean().default(false),
     order: z.number().int().default(100),
     title: nonEmpty,
     description: nonEmpty,
@@ -41,6 +43,13 @@ export const scenarioSchema = z
     ai_goal: nonEmpty,
     ai_constraints: z.array(nonEmpty),
     opening_line: nonEmpty,
+    opening_mood: z.enum(MOODS).default("neutral"),
+    // Used to pick a matching browser voice; rate and pitch shape the character slightly.
+    voice: z.object({
+      gender: z.enum(["female", "male"]),
+      rate: z.number().min(0.7).max(1.3).default(1),
+      pitch: z.number().min(0.5).max(1.5).default(1),
+    }),
     localizations: z.record(languageId, localizationSchema).default({}),
     behavior_rules: z.array(nonEmpty).min(1),
     success_conditions: z.array(nonEmpty).min(1),
@@ -87,6 +96,8 @@ export interface PublicScenario {
   personaRole: string;
   personaDescription: string;
   personalityTraits: string[];
+  voice: Scenario["voice"];
+  openingMood: Scenario["opening_mood"];
   languageModes: Scenario["language_modes"];
   defaultLanguage: Scenario["default_language"];
   maxTurns: number;

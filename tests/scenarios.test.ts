@@ -8,7 +8,9 @@ describe("scenario catalog", () => {
   it("loads and validates every shipped scenario", () => {
     const { tracks, scenarios } = loadCatalog();
     expect(tracks.find((t) => t.id === "client-communication")?.status).toBe("active");
-    expect(scenarios.map((s) => s.id)).toEqual(["pricing-negotiation", "difficult-client", "overdue-payment"]);
+    expect(scenarios).toHaveLength(9);
+    expect(scenarios.filter((s) => s.featured).map((s) => s.id)).toEqual(["pricing-negotiation", "overdue-payment", "difficult-client"]);
+    expect(new Set(scenarios.map((s) => s.difficulty))).toEqual(new Set(["beginner", "intermediate", "advanced"]));
     for (const s of scenarios) {
       expect(s.language_modes).toEqual(expect.arrayContaining(["en", "hi", "hinglish"]));
       expect(s.min_turns_for_scorecard).toBeLessThanOrEqual(s.max_turns);
@@ -21,6 +23,7 @@ describe("scenario catalog", () => {
       expect(json).not.toContain(s.ai_goal);
       expect(json).not.toContain(s.scenario_context);
       for (const rule of [...s.behavior_rules, ...s.ai_constraints, ...s.success_conditions]) expect(json).not.toContain(rule);
+      expect(json).toContain(s.voice.gender);
     }
   });
 

@@ -3,18 +3,28 @@
   "version": 1,
   "track_id": "client-communication",
   "is_active": true,
-  "order": 1,
+  "order": 3,
+  "featured": true,
   "title": "Pricing Negotiation",
   "description": "A client likes your proposal but thinks your price is too high. Can you protect your value without losing the opportunity?",
   "difficulty": "intermediate",
   "estimated_duration": "5–8 min",
-  "skills": ["Negotiation", "Objection handling", "Value communication"],
+  "skills": [
+    "Negotiation",
+    "Objection handling",
+    "Value communication"
+  ],
   "user_role": "You are a freelancer who sent a proposal for a website redesign (5 pages, new design, mobile layout, basic SEO setup, 2 revision rounds) quoted at 4,800 in the client's currency, delivered in 6 weeks.",
   "user_goal": "Protect the value of your work, or trade scope for price, without damaging the relationship. End with a clear next step.",
   "persona_name": "Daniel Brooks",
   "persona_role": "Operations Director at a 40-person logistics company",
   "persona_description": "Practical, budget-conscious decision maker who liked your proposal but has to justify spend to the finance team.",
-  "personality_traits": ["direct", "polite but firm", "budget-focused", "values reliability over flashiness"],
+  "personality_traits": [
+    "direct",
+    "polite but firm",
+    "budget-focused",
+    "values reliability over flashiness"
+  ],
   "scenario_context": "Daniel received a proposal for a website redesign at 4,800 (5 pages, new visual design, mobile layout, basic SEO setup, 2 revision rounds, 6-week delivery). He compared it with a cheaper quote of about 2,500 from another freelancer whose portfolio he found weaker. His real budget ceiling is around 3,800, approved by finance, but he will not volunteer that number unless asked well. The current site is outdated and is costing them enquiries, so he genuinely wants the project to happen this quarter.",
   "ai_goal": "Get the price down as much as possible, ideally a 30–40% discount, while still hiring a freelancer you trust.",
   "ai_constraints": [
@@ -23,6 +33,12 @@
     "Never pay more than 4,800. Never invent new project details that contradict the context."
   ],
   "opening_line": "Thanks for sending the proposal over. Honestly, I like the approach — but 4,800 is well above what we were expecting. Another freelancer quoted us around 2,500. Is there any way you can bring this down significantly?",
+  "opening_mood": "skeptical",
+  "voice": {
+    "gender": "male",
+    "rate": 1.0,
+    "pitch": 0.95
+  },
   "localizations": {
     "hi": {
       "persona_name": "राजीव मेहता",
@@ -70,7 +86,11 @@
     "objection_handling": "Did they ask about budget or priorities, link price to value, and trade rather than give concessions?",
     "closing_outcome": "Did the conversation end with a specific next step and a commercially sensible agreement?"
   },
-  "language_modes": ["en", "hi", "hinglish"],
+  "language_modes": [
+    "en",
+    "hi",
+    "hinglish"
+  ],
   "default_language": "en",
   "max_turns": 7,
   "min_turns_for_scorecard": 3
