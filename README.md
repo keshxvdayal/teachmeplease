@@ -164,6 +164,10 @@ az acr build -r <registry> -t teachmeplease:latest .
 
 **Daily cleanup:** schedule `POST /api/admin/cleanup` (Logic App or GitHub Action cron).
 
+### Vercel
+
+Vercel uses the `vercel-build` script to run `prisma migrate deploy` before building the application. Configure `DATABASE_URL`, `GEMINI_API_KEY`, and `SESSION_SECRET` in the Vercel project for the relevant environment, then redeploy after adding or changing an environment variable. Vercel environment-variable changes do not update an existing deployment.
+
 Store secrets in App Settings or Key Vault, never in the repo.
 
 ## Cost estimate
