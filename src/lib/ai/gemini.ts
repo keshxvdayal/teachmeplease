@@ -47,23 +47,33 @@ const THINKING_HEADROOM_TOKENS = 1536;
 /** Gemini 3.x models take a thinking *level*; 2.x models take a token budget. */
 export function thinkingConfigFor(model: string, budget: number | undefined) {
   if (budget === undefined) return undefined;
-  if (isGemini3Plus(model)) return budget <= 0 ? { thinkingLevel: "low" } : undefined;
+  // Flash models can think "minimal"ly, which is much faster for short replies; Pro's floor is "low".
+  if (isGemini3Plus(model)) return budget <= 0 ? { thinkingLevel: /flash/.test(model) ? "minimal" : "low" } : undefined;
   return { thinkingBudget: budget };
 }
+
+// After a 429, skip that model for a while instead of paying a round trip to be refused again.
+const DEFAULT_COOLDOWN_SECONDS = 60;
 
 export class GeminiProvider implements LLMProvider {
   readonly name = "gemini";
 
+  private readonly models: string[];
+  private readonly coolingUntil = new Map<string, number>();
+
   /**
-   * @param fallbackModel optional second model used when the primary is rate limited or
-   *   unavailable — useful on the free tier, where each model has its own small daily quota.
+   * @param fallbackModels models tried in order when the previous one is rate limited, unavailable
+   *   or too slow — useful on the free tier, where each model has its own small quota.
    */
   constructor(
     private readonly apiKey: string,
     readonly model: string,
     private readonly fetchImpl: typeof fetch = fetch,
-    readonly fallbackModel?: string,
-  ) {}
+    fallbackModels?: string | string[],
+  ) {
+    const fallbacks = typeof fallbackModels === "string" ? fallbackModels.split(",") : (fallbackModels ?? []);
+    this.models = [...new Set([model, ...fallbacks.map((m) => m.trim()).filter(Boolean)])];
+  }
 
   estimateCostUsd(inputTokens: number, outputTokens: number): number {
     const p = PRICING_PER_MILLION[this.model] ?? PRICING_PER_MILLION["gemini-2.5-flash"];
@@ -71,13 +81,28 @@ export class GeminiProvider implements LLMProvider {
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
-    try {
-      return await this.generateWith(this.model, req);
-    } catch (err) {
-      const switchable = err instanceof LLMError && (err.code === "rate_limited" || err.code === "unavailable");
-      if (!switchable || !this.fallbackModel || this.fallbackModel === this.model) throw err;
-      return this.generateWith(this.fallbackModel, req);
+    const now = Date.now();
+    const ready = this.models.filter((m) => (this.coolingUntil.get(m) ?? 0) <= now);
+    // If every model is cooling down, try them anyway rather than fail without asking.
+    const order = ready.length ? ready : this.models;
+    const deadline = now + req.timeoutMs;
+    for (const [i, model] of order.entries()) {
+      const last = i === order.length - 1;
+      const remaining = deadline - Date.now();
+      // A slow model mustn't use up the whole budget while a faster fallback waits.
+      const timeoutMs = last ? remaining : Math.min(remaining, Math.ceil(req.timeoutMs / 2));
+      try {
+        return await this.generateWith(model, { ...req, timeoutMs });
+      } catch (err) {
+        if (!(err instanceof LLMError)) throw err;
+        if (err.code === "rate_limited") {
+          this.coolingUntil.set(model, Date.now() + (err.retryAfterSeconds ?? DEFAULT_COOLDOWN_SECONDS) * 1000);
+        }
+        const switchable = err.code === "rate_limited" || err.code === "unavailable" || err.code === "timeout";
+        if (!switchable || last || deadline <= Date.now()) throw err;
+      }
     }
+    throw new LLMError("unavailable", "No Gemini model is available");
   }
 
   private async generateWith(model: string, req: GenerateRequest): Promise<GenerateResult> {

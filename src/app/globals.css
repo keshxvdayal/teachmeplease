@@ -208,3 +208,20 @@
   animation: wave 1.1s ease-in-out infinite;
   transform-origin: center;
 }
+
+/* Persona avatar: an occasional natural blink */
+.avatar-blink {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: blink 5.2s infinite;
+}
+@keyframes blink {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  96.5% {
+    transform: scaleY(0.1);
+  }
+}

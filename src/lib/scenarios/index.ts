@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { limits } from "@/lib/config/limits";
 import type { ConversationLanguage } from "@/lib/config/languages";
-import { scenarioSchema, trackSchema, type PublicScenario, type Scenario, type Track } from "./schema";
+import { scenarioPatience, scenarioSchema, trackSchema, type PublicScenario, type Scenario, type Track } from "./schema";
 
 const CONTENT_DIR = path.join(process.cwd(), "content");
 
@@ -99,6 +99,8 @@ export function toPublicScenario(s: Scenario, language?: ConversationLanguage): 
     personalityTraits: s.personality_traits,
     voice: s.voice,
     openingMood: s.opening_mood,
+    patience: scenarioPatience(s),
+    callDirection: s.call_direction,
     languageModes: s.language_modes,
     defaultLanguage: s.default_language,
     maxTurns: s.max_turns,

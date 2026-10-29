@@ -1,0 +1,5 @@
+# Serves the voice agent over HTTPS with an automatic Let's Encrypt certificate.
+# DOMAIN can be a free hostname such as 203-0-113-7.sslip.io (your server's IP with dashes).
+{$DOMAIN} {
+	reverse_proxy 127.0.0.1:7860
+}

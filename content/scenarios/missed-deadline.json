@@ -26,7 +26,9 @@
   ],
   "opening_line": "Hi — I've only got a few minutes before my next meeting. Everything on track for Thursday?",
   "opening_mood": "neutral",
-  "voice": { "gender": "male", "rate": 1.05, "pitch": 0.9 },
+  "patience": 4,
+  "call_direction": "outgoing",
+  "voice": { "gender": "male", "rate": 1.05, "pitch": 0.9, "kokoro": "am_michael" },
   "localizations": {
     "hi": {
       "persona_name": "संजय मल्होत्रा",

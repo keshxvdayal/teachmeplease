@@ -1,11 +1,18 @@
 import { limits } from "@/lib/config/limits";
 import type { ConversationLanguage } from "@/lib/config/languages";
 import { localizedPersona } from "@/lib/scenarios";
-import type { Scenario } from "@/lib/scenarios/schema";
+import { scenarioPatience, type Scenario } from "@/lib/scenarios/schema";
 import type { ChatTurn } from "@/lib/ai";
 import { AppError } from "@/lib/errors";
 import { callModel, type ActorType } from "@/lib/usage/tracking";
-import { buildRoleplaySystemPrompt, roleplayOutputSchema, type ClientState } from "./prompt";
+import {
+  buildRoleplaySystemPrompt,
+  PATIENCE_CHANGES,
+  PATIENCE_DELTA,
+  roleplayOutputSchema,
+  type ClientState,
+  type PatienceChange,
+} from "./prompt";
 import { isMood, stepMood, type Mood } from "./moods";
 
 export interface TranscriptEntry {
@@ -13,12 +20,34 @@ export interface TranscriptEntry {
   text: string;
 }
 
+export type EndReason = "client_ended" | "patience_exhausted" | "turn_limit";
+
 export interface ClientReply {
   reply: string;
   mood: Mood;
   notes: string | null;
+  /** Remaining patience after this reply, 0..maxPatience. */
+  patience: number;
   wantsToEnd: boolean;
+  /** Why the conversation is over, when it is. */
+  endReason: EndReason | null;
   model: string;
+}
+
+/** Applies the model's patience change and decides whether this reply ends the call. */
+export function concludeTurn(args: {
+  patience: number;
+  maxPatience: number;
+  change: PatienceChange | null;
+  modelEnded: boolean;
+  userTurn: number;
+  maxTurns: number;
+}): { patience: number; endReason: EndReason | null } {
+  const delta = args.change ? PATIENCE_DELTA[args.change] : 0;
+  const patience = Math.max(0, Math.min(args.maxPatience, args.patience + delta));
+  const endReason: EndReason | null =
+    patience === 0 ? "patience_exhausted" : args.modelEnded ? "client_ended" : args.userTurn >= args.maxTurns ? "turn_limit" : null;
+  return { patience, endReason };
 }
 
 const MAX_NOTES_CHARS = 500;
@@ -62,14 +91,17 @@ function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function parseRoleplayOutput(text: string): { reply: string; end: boolean; mood: Mood | null; notes: string | null } | null {
+export function parseRoleplayOutput(
+  text: string,
+): { reply: string; end: boolean; mood: Mood | null; patience: PatienceChange | null; notes: string | null } | null {
   try {
-    const obj = JSON.parse(text) as { reply?: unknown; end_conversation?: unknown; mood?: unknown; notes?: unknown };
+    const obj = JSON.parse(text) as { reply?: unknown; end_conversation?: unknown; mood?: unknown; patience?: unknown; notes?: unknown };
     if (typeof obj.reply !== "string" || !obj.reply.trim()) return null;
     return {
       reply: obj.reply,
       end: obj.end_conversation === true,
       mood: isMood(obj.mood) ? obj.mood : null,
+      patience: (PATIENCE_CHANGES as readonly unknown[]).includes(obj.patience) ? (obj.patience as PatienceChange) : null,
       notes: typeof obj.notes === "string" && obj.notes.trim() ? obj.notes.trim().slice(0, MAX_NOTES_CHARS) : null,
     };
   } catch {
@@ -93,6 +125,8 @@ export async function generateClientReply(args: {
     maxTurns: args.maxTurns,
   }, args.state);
   const previousMood = args.state?.mood ?? args.scenario.opening_mood;
+  const maxPatience = args.state?.maxPatience ?? scenarioPatience(args.scenario);
+  const previousPatience = args.state?.patience ?? maxPatience;
   const turns: ChatTurn[] = args.transcript.map((m) => ({
     role: m.speaker === "ai" ? "assistant" : "user",
     text: m.text,
@@ -122,11 +156,21 @@ export async function generateClientReply(args: {
     if (parsed) {
       const reply = sanitizeReply(parsed.reply, persona.name);
       if (reply && !looksLikeLeak(reply)) {
+        const { patience, endReason } = concludeTurn({
+          patience: previousPatience,
+          maxPatience,
+          change: parsed.patience,
+          modelEnded: parsed.end,
+          userTurn: args.userTurn,
+          maxTurns: args.maxTurns,
+        });
         return {
           reply,
           mood: parsed.mood ? stepMood(previousMood, parsed.mood) : previousMood,
           notes: parsed.notes ?? args.state?.notes ?? null,
-          wantsToEnd: parsed.end || args.userTurn >= args.maxTurns,
+          patience,
+          wantsToEnd: endReason !== null,
+          endReason,
           model: result.model,
         };
       }
@@ -136,7 +180,9 @@ export async function generateClientReply(args: {
     reply: FALLBACK_LINES[args.language],
     mood: previousMood,
     notes: args.state?.notes ?? null,
-    wantsToEnd: false,
+    patience: previousPatience,
+    wantsToEnd: args.userTurn >= args.maxTurns,
+    endReason: args.userTurn >= args.maxTurns ? "turn_limit" : null,
     model: "fallback",
   };
 }

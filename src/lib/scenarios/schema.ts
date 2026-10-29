@@ -44,12 +44,18 @@ export const scenarioSchema = z
     ai_constraints: z.array(nonEmpty),
     opening_line: nonEmpty,
     opening_mood: z.enum(MOODS).default("neutral"),
+    // How many weak moves the persona tolerates before ending the call. Defaults by difficulty.
+    patience: z.number().int().min(2).max(10).optional(),
     // Used to pick a matching browser voice; rate and pitch shape the character slightly.
     voice: z.object({
       gender: z.enum(["female", "male"]),
       rate: z.number().min(0.7).max(1.3).default(1),
       pitch: z.number().min(0.5).max(1.5).default(1),
+      // The voice agent's Kokoro voice; its prefix sets the accent (a* American, b* British).
+      kokoro: z.string().regex(/^[a-z]{2}_[a-z]+$/).optional(),
     }),
+    // Who places the call: "outgoing" when the learner rings the client, "incoming" when the client rings them.
+    call_direction: z.enum(["outgoing", "incoming"]).default("outgoing"),
     localizations: z.record(languageId, localizationSchema).default({}),
     behavior_rules: z.array(nonEmpty).min(1),
     success_conditions: z.array(nonEmpty).min(1),
@@ -81,6 +87,12 @@ export const scenarioSchema = z
 export type Track = z.infer<typeof trackSchema>;
 export type Scenario = z.infer<typeof scenarioSchema>;
 
+const DEFAULT_PATIENCE: Record<Scenario["difficulty"], number> = { beginner: 6, intermediate: 5, advanced: 4 };
+
+export function scenarioPatience(s: Scenario): number {
+  return s.patience ?? DEFAULT_PATIENCE[s.difficulty];
+}
+
 // The only scenario fields that may be sent to the browser.
 export interface PublicScenario {
   id: string;
@@ -98,6 +110,8 @@ export interface PublicScenario {
   personalityTraits: string[];
   voice: Scenario["voice"];
   openingMood: Scenario["opening_mood"];
+  patience: number;
+  callDirection: Scenario["call_direction"];
   languageModes: Scenario["language_modes"];
   defaultLanguage: Scenario["default_language"];
   maxTurns: number;

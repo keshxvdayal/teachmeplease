@@ -9,6 +9,7 @@ import { FormError } from "@/components/ui/field";
 import { LocalTime } from "@/components/site/local-time";
 import { ScoreRing } from "@/components/ui/score-ring";
 import { ScoreBars } from "./score-bars";
+import { InsightsPanel } from "./insights-panel";
 import { api, ApiRequestError, trackEvent } from "@/lib/client/api";
 import type { SessionView } from "@/lib/sessions/service";
 
@@ -250,6 +251,8 @@ export function ResultsView({ initial, isAnonymous }: { initial: SessionView; is
           abilities.
         </p>
       </section>
+
+      <InsightsPanel session={session} />
 
       <div className="flex flex-col gap-3 sm:flex-row">
         <ButtonLink href={`/practice/${session.scenario.id}`} size="lg">

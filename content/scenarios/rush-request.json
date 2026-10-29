@@ -25,7 +25,9 @@
   ],
   "opening_line": "Hey, quick one — we've got investors coming in and I need our pitch deck redesigned, all ten slides, by tomorrow morning. You're fast, right? Same price as last time works?",
   "opening_mood": "warming",
-  "voice": { "gender": "male", "rate": 1.12, "pitch": 1.05 },
+  "patience": 6,
+  "call_direction": "incoming",
+  "voice": { "gender": "male", "rate": 1.12, "pitch": 1.05, "kokoro": "am_puck" },
   "localizations": {
     "hi": {
       "persona_name": "करण सिंह",

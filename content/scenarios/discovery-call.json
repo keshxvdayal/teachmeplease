@@ -25,7 +25,9 @@
   ],
   "opening_line": "Hi! Thanks for calling back. So, like I said in the form, we need a new website and probably some help with social media. Roughly how much would something like that cost?",
   "opening_mood": "neutral",
-  "voice": { "gender": "female", "rate": 1.05, "pitch": 1.05 },
+  "patience": 6,
+  "call_direction": "outgoing",
+  "voice": { "gender": "female", "rate": 1.05, "pitch": 1.05, "kokoro": "af_heart" },
   "localizations": {
     "hi": {
       "persona_name": "सीमा अरोड़ा",

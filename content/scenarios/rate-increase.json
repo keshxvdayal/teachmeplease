@@ -35,10 +35,13 @@
   ],
   "opening_line": "Hi, good to hear from you. You said there was something you wanted to discuss about our arrangement?",
   "opening_mood": "neutral",
+  "patience": 5,
+  "call_direction": "outgoing",
   "voice": {
     "gender": "female",
     "rate": 0.97,
-    "pitch": 0.98
+    "pitch": 0.98,
+    "kokoro": "bf_isabella"
   },
   "localizations": {
     "hi": {

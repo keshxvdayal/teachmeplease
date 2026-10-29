@@ -26,7 +26,9 @@
   ],
   "opening_line": "I'll be honest... I don't love any of them. They're just not what I imagined. It doesn't feel like us at all.",
   "opening_mood": "frustrated",
-  "voice": { "gender": "female", "rate": 0.98, "pitch": 1.08 },
+  "patience": 4,
+  "call_direction": "incoming",
+  "voice": { "gender": "female", "rate": 0.98, "pitch": 1.08, "kokoro": "bf_emma" },
   "localizations": {
     "hi": {
       "persona_name": "कविता जोशी",

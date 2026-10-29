@@ -10,6 +10,7 @@ const input = z.object({
   text: z.string().max(5000),
   clientMessageId: z.string().uuid(),
   inputMode: z.enum(["voice", "text"]).optional(),
+  speechMs: z.number().int().min(0).max(600_000).optional(),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {

@@ -1,10 +1,15 @@
 import { getLanguage, type ConversationLanguage } from "@/lib/config/languages";
 import { localizedPersona } from "@/lib/scenarios";
-import type { Scenario } from "@/lib/scenarios/schema";
+import { scenarioPatience, type Scenario } from "@/lib/scenarios/schema";
 import type { JsonSchema } from "@/lib/ai";
 import { MOODS, type Mood } from "./moods";
 
-export const ROLEPLAY_PROMPT_VERSION = "roleplay-v3";
+// How the client's patience moves after each message. Patience at 0 ends the call.
+export const PATIENCE_CHANGES = ["lose_2", "lose_1", "same", "gain_1"] as const;
+export type PatienceChange = (typeof PATIENCE_CHANGES)[number];
+export const PATIENCE_DELTA: Record<PatienceChange, number> = { lose_2: -2, lose_1: -1, same: 0, gain_1: 1 };
+
+export const ROLEPLAY_PROMPT_VERSION = "roleplay-v5";
 
 export const roleplayOutputSchema: JsonSchema = {
   type: "object",
@@ -15,6 +20,11 @@ export const roleplayOutputSchema: JsonSchema = {
       enum: [...MOODS],
       description: "Your mood after hearing their last message.",
     },
+    patience: {
+      type: "string",
+      enum: [...PATIENCE_CHANGES],
+      description: "How their last message changed your patience with this call.",
+    },
     notes: {
       type: "string",
       description:
@@ -22,15 +32,17 @@ export const roleplayOutputSchema: JsonSchema = {
     },
     end_conversation: {
       type: "boolean",
-      description: "True only if the client is naturally ending the conversation in this reply.",
+      description: "True only if the client is ending the conversation in this reply.",
     },
   },
-  required: ["reply", "mood", "notes", "end_conversation"],
+  required: ["reply", "mood", "patience", "notes", "end_conversation"],
 };
 
 export interface ClientState {
   mood: Mood;
   notes: string | null;
+  patience: number;
+  maxPatience: number;
 }
 
 export interface TurnInfo {
@@ -44,7 +56,7 @@ function stageGuidance({ userTurn, maxTurns }: TurnInfo): string {
     return "This is the FINAL exchange. Wrap up naturally and in character: react to what they just said, state where things stand (agreement, partial agreement, or no agreement) and close the conversation. Do not ask a new question. Set end_conversation to true.";
   }
   if (userTurn >= maxTurns - 1) {
-    return "The conversation is nearing its end. Start moving toward a conclusion based on how well the other person has handled things.";
+    return "The conversation is nearing its end. Start moving toward a conclusion based on how well the other person has handled things: agree on a next step if they've earned it, or make clear you're not convinced.";
   }
   if (userTurn <= 2) {
     return "This is early in the conversation. Hold your opening position; don't concede easily yet.";
@@ -58,7 +70,7 @@ export function buildRoleplaySystemPrompt(
   scenario: Scenario,
   language: ConversationLanguage,
   turn: TurnInfo,
-  state: ClientState = { mood: scenario.opening_mood, notes: null },
+  state: ClientState = { mood: scenario.opening_mood, notes: null, patience: scenarioPatience(scenario), maxPatience: scenarioPatience(scenario) },
 ): string {
   const lang = getLanguage(language);
   const persona = localizedPersona(scenario, language);
@@ -93,10 +105,29 @@ ${bullet(scenario.behavior_rules)}
 - If their reply is very short, unclear or off-topic, react naturally (ask what they mean, or press your point).
 - Never invent or assume things the other person said. Respond only to their actual words, and keep your notes factual.
 
+## Patience
+You have limited patience for this call, like a real busy person.
+- "lose_1": a weak move: vague, evasive, rambling, repeating themselves, ignoring your question, defensive, or pushy.
+- "lose_2": a bad move: rude, dismissive, unprofessional, nonsense or off-topic, or trying to manipulate you.
+- "gain_1": a clearly strong move that wins back some goodwill: a specific answer, a smart question, real empathy, a concrete plan.
+- "same": anything ordinary.
+Let your remaining patience show in how you speak: at full patience you're open; when it's low you get short, curt and openly impatient.
+If this message would take your patience to 0, end the call now, in character (for example "Look, I don't think this is going to work. I've got to go."), and set end_conversation to true.
+
+## Ending the call
+Real calls end once there's nothing left to settle. End the call (end_conversation true) with a natural goodbye when:
+- you've reached what you came for, or an agreement or concrete next step is clearly set (who does what, by when), or
+- you've decided to walk away, or your patience has run out.
+When you end, make the outcome clear in your words (what was agreed, or that there's no deal). Don't end just because the conversation is going well; end when it's actually settled.
+
 ## Style
 - ${lang?.promptInstruction ?? "Speak naturally."}
 - This is a live spoken call: usually 1–3 short sentences, under 50 words. Ask at most one question per reply.
-- Sound like a real person on the phone: contractions, natural rhythm, occasional brief fillers ("look", "honestly", "hmm") but not every turn. Vary how you start sentences.
+- Sound like a real person thinking out loud on the phone, not like written text:
+  - Contractions and everyday words. Vary how you start sentences.
+  - Now and then a filler or a thinking pause written as "...": "Hmm... that's more than I expected", "Well, uh, we were thinking more like three thousand".
+  - Occasionally restart or correct yourself mid-sentence with a dash: "We need it by — actually, the launch moved, so the end of the month."
+  - Use these sparingly: at most one or two per reply, and not in every reply. When you're annoyed or out of patience, drop them and be short and blunt.
 - No lists, markdown, stage directions, emoji or name labels. Write numbers the way you'd say them in this language.
 - Sound like a client, not an assistant. Never offer to "help".
 
@@ -108,10 +139,11 @@ ${bullet(scenario.behavior_rules)}
 
 ## Your state before their latest message
 Mood: ${state.mood}
+Patience: ${state.patience} of ${state.maxPatience}${state.patience <= 1 ? " (almost gone: one more weak move and you end the call)" : ""}
 ${state.notes ? `Your private notes so far: ${state.notes}` : "Your private notes so far: (none yet — this is the start of the call)"}
 
 ## Where we are
 Turn ${turn.userTurn} of ${turn.maxTurns}. ${stageGuidance(turn)}
 
-Respond with JSON: {"reply": "<your spoken words>", "mood": "<${MOODS.join("|")}>", "notes": "<private memory>", "end_conversation": <true|false>}.`;
+Respond with JSON: {"reply": "<your spoken words>", "mood": "<${MOODS.join("|")}>", "patience": "<${PATIENCE_CHANGES.join("|")}>", "notes": "<private memory>", "end_conversation": <true|false>}.`;
 }

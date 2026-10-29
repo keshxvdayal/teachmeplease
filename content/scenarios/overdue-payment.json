@@ -35,10 +35,13 @@
   ],
   "opening_line": "Hey! Good to hear from you. Yeah, I saw your emails — sorry, it's been absolutely crazy here this month. The invoice is in the system, it's definitely coming, finance is just a bit slow at the moment.",
   "opening_mood": "neutral",
+  "patience": 5,
+  "call_direction": "outgoing",
   "voice": {
     "gender": "male",
     "rate": 1.05,
-    "pitch": 1.0
+    "pitch": 1.0,
+    "kokoro": "bm_george"
   },
   "localizations": {
     "hi": {

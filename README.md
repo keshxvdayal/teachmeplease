@@ -29,7 +29,7 @@ Languages: English, Hindi, Hinglish.
 | UI | Tailwind CSS 4, lucide icons, Inter |
 | Database | PostgreSQL via Prisma 6 |
 | AI | Google Gemini (`gemini-2.5-flash`) via REST, behind a provider interface |
-| Voice | Browser Web Speech API (`SpeechRecognition`) + `speechSynthesis` |
+| Voice | Pipecat SmallWebRTC speech service: Whisper STT + Kokoro TTS, push-to-talk |
 | Auth | Email + password (scrypt), httpOnly cookie sessions; signed anonymous-visitor cookie |
 | Tests | Vitest (unit + integration against a real Postgres test DB) |
 
@@ -47,6 +47,72 @@ npm run dev                     # http://localhost:3000
 
 Get a Gemini key at https://aistudio.google.com/apikey and put it in `GEMINI_API_KEY`. Without a key the app still runs. Sessions start, but AI replies return a friendly "not configured" error and the user's message is kept for retry.
 
+### Voice agent
+
+Voice calls run through a small speech service in `voice-agent/` (Pipecat). It only listens
+and speaks: Whisper turns the learner's speech into text, the text goes through the same
+`/api/sessions/:id/messages` endpoint as typed replies (so mood, patience, the end of the
+call and the scorecard work identically), and Kokoro speaks the client's reply. It needs no
+API key.
+
+Calls are push-to-talk: hold the mic button (or Space) while speaking and let go to send.
+The agent only hears audio while the button is held, so it never mistakes the client's voice
+for the learner's, and pressing the button interrupts the client mid-sentence.
+
+Run it locally with [uv](https://docs.astral.sh/uv/) and Python 3.12:
+
+```bash
+cd voice-agent
+uv venv --python 3.12
+uv sync
+cp .env.example .env
+uv run python server.py         # wait for "Speech models loaded"
+```
+
+On startup the service downloads and loads the Whisper and Kokoro models (about 0.8 GB on
+the first run). On Apple Silicon Whisper runs on the GPU through MLX; elsewhere it runs on the
+CPU with faster-whisper. Set `NEXT_PUBLIC_PIPECAT_URL` only when the service is not at
+`http://127.0.0.1:7860/api/offer`.
+
+### Patience and the end of a call
+
+Each scenario has a `patience` level (defaults: beginner 6, intermediate 5, advanced 4).
+After every reply the client's model rates the learner's message: vague, evasive or pushy
+replies cost one point, rude or nonsensical ones cost two, and a clearly strong move wins one
+back. At zero the client hangs up. The call also ends when the client wraps it up (an
+agreement or next step is settled) or the turns run out. Once a call has ended the session
+accepts no more messages and the feedback opens automatically.
+
+#### Deploying the voice agent (Oracle Cloud Always Free)
+
+The app on Vercel can't host the voice agent: it needs a long-running process, about
+1.5 GB of RAM and UDP ports for WebRTC. An Oracle Cloud Always Free ARM VM (up to
+4 cores and 24 GB RAM) runs it at no cost. Without a GPU, expect about 2-4 calls at once.
+
+1. **Create the VM:** shape `VM.Standard.A1.Flex` (ARM, 2-4 OCPUs, 8+ GB RAM), Ubuntu 24.04.
+2. **Open ports** in the VCN security list: TCP 80 and 443, and UDP 1024-65535 for call
+   audio. Oracle's Ubuntu images also block them in the VM's own firewall:
+   ```bash
+   sudo iptables -I INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
+   sudo iptables -I INPUT -p udp --dport 1024:65535 -j ACCEPT
+   sudo netfilter-persistent save
+   ```
+3. **Install Docker and start the agent.** `DOMAIN` can be a free hostname made from the
+   VM's public IP, e.g. `203-0-113-7.sslip.io`; Caddy gets an HTTPS certificate for it.
+   ```bash
+   curl -fsSL https://get.docker.com | sudo sh
+   git clone <this repo> && cd teachmeplease/voice-agent
+   cp .env.example .env
+   # in .env: HOST="127.0.0.1", ALLOWED_ORIGINS="https://your-app.vercel.app"
+   sudo DOMAIN=203-0-113-7.sslip.io docker compose up -d --build
+   curl https://203-0-113-7.sslip.io/health
+   ```
+4. **Point the app at it:** in Vercel set
+   `NEXT_PUBLIC_PIPECAT_URL=https://203-0-113-7.sslip.io/api/offer` and redeploy.
+5. **Add a TURN server** before real users. STUN alone fails on some mobile and corporate
+   networks; a TURN relay fixes that. Several providers have free tiers. Put its details in
+   `ICE_SERVERS` (see `voice-agent/.env.example`); the browser picks them up automatically.
+
 ### Environment variables
 
 | Variable | Required | Purpose |
@@ -55,7 +121,7 @@ Get a Gemini key at https://aistudio.google.com/apikey and put it in `GEMINI_API
 | `GEMINI_API_KEY` | yes | Server-side only. Never prefix with `NEXT_PUBLIC_` |
 | `SESSION_SECRET` | yes (prod) | 32+ random chars; signs cookies, hashes IPs. `openssl rand -base64 32` |
 | `GEMINI_MODEL` | no | Default `gemini-2.5-flash` |
-| `GEMINI_FALLBACK_MODEL` | no | Used automatically when the main model is rate limited or unavailable, e.g. `gemini-3.5-flash-lite`. Each model has its own free-tier quota |
+| `GEMINI_FALLBACK_MODEL` | no | Comma-separated models tried in order when the previous one is rate limited, unavailable or too slow, e.g. `gemini-2.5-flash,gemini-3.5-flash-lite`. Each model has its own free-tier quota, and a rate-limited model is skipped until it cools down |
 | `ADMIN_TOKEN` | no | Bearer token for `/api/admin/*` |
 | `APP_URL` | no | Public URL used in metadata |
 | `CONTACT_EMAIL` | no | Shown in footer, privacy policy, terms |
@@ -183,7 +249,7 @@ One 7-turn session is about 9 Gemini calls: roughly 17k input tokens and 2k outp
 - **Gemini free-tier data use:** on the unpaid tier Google may use prompts and responses to improve its products. Move to a paid tier before real users and confirm the current terms. The privacy policy already discloses AI processing.
 - **The free-tier quota is too small for real users** (see the cost estimate above). Enable billing before a pilot.
 - **Fallback model quality:** `gemini-3.5-flash-lite` stays in character and scores sensibly in our evals, but is lighter than 2.5 Flash. Spot-check it with `npm run eval:ai`.
-- **Voice** depends on the browser. Chrome desktop and Android work best, and Firefox has no speech recognition (text works everywhere). Chrome's recognition audio goes to Google's speech service. Hindi text-to-speech needs a Hindi voice on the device.
+- **Voice** requires the separate Pipecat service (`voice-agent/`), hosted outside Vercel. Text mode works without it. Kokoro's voice follows the scenario's gender; override it with `KOKORO_VOICE` in `voice-agent/.env`.
 - **Hinglish** speech recognition is imperfect (users can edit before sending). Validate Hindi and Hinglish roleplay quality with native speakers before marketing it.
 - **Auth** is email + password only. Google sign-in, password reset and email verification are not built yet. Password reset needs an email provider.
 - **Interface language** is English only. The conversation language is separate and selectable.

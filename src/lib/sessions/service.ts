@@ -5,8 +5,8 @@ import { getLanguage, isConversationLanguage, type ConversationLanguage } from "
 import { AppError } from "@/lib/errors";
 import { canAccess, ownedBy, type Actor } from "@/lib/auth/identity";
 import { getScenario, localizedPersona, toPublicScenario } from "@/lib/scenarios";
-import type { PublicScenario, Scenario } from "@/lib/scenarios/schema";
-import { generateClientReply } from "@/lib/roleplay/engine";
+import { scenarioPatience, type PublicScenario, type Scenario } from "@/lib/scenarios/schema";
+import { generateClientReply, type EndReason } from "@/lib/roleplay/engine";
 import { generateHint, type Hint } from "@/lib/roleplay/hint";
 import { isMood, type Mood } from "@/lib/roleplay/moods";
 import { generateScorecard } from "@/lib/scoring/engine";
@@ -23,6 +23,8 @@ export interface MessageView {
   turn: number;
   /** AI messages only. */
   mood: Mood | null;
+  /** User voice turns only: how long they spoke. */
+  speechMs: number | null;
   createdAt: string;
 }
 
@@ -44,6 +46,11 @@ export interface SessionView {
   hintsLeft: number;
   /** The client's current mood (latest AI reply, or the scenario's opening mood). */
   clientMood: Mood;
+  /** How many more weak moves the client will tolerate; the call ends at 0. */
+  patience: number;
+  maxPatience: number;
+  /** Set once the conversation has concluded; no more messages are accepted. */
+  endReason: EndReason | null;
   startedAt: string;
   completedAt: string | null;
 }
@@ -54,6 +61,8 @@ function toView(session: PracticeSession & { messages: Message[] }, scenario: Sc
   const last = messages[messages.length - 1];
   const parsedScorecard = session.scorecard ? scorecardSchema.safeParse(session.scorecard) : null;
   const lastMood = [...messages].reverse().find((m) => m.speaker === "ai" && isMood(m.mood))?.mood;
+  const maxPatience = scenarioPatience(scenario);
+  const lastPatience = [...messages].reverse().find((m) => m.speaker === "ai" && m.patience !== null)?.patience;
   return {
     id: session.id,
     status: session.status,
@@ -71,6 +80,7 @@ function toView(session: PracticeSession & { messages: Message[] }, scenario: Sc
       turn: m.turn,
       // privateNotes is deliberately never included.
       mood: m.speaker === "ai" && isMood(m.mood) ? m.mood : null,
+      speechMs: m.speaker === "user" ? m.speechMs : null,
       createdAt: m.createdAt.toISOString(),
     })),
     pendingRetry:
@@ -79,6 +89,9 @@ function toView(session: PracticeSession & { messages: Message[] }, scenario: Sc
     scoringAttemptsLeft: Math.max(0, limits.scoringAttemptsPerSession - session.scoringAttempts),
     hintsLeft: Math.max(0, limits.hintsPerSession - session.hintsUsed),
     clientMood: isMood(lastMood) ? lastMood : scenario.opening_mood,
+    patience: lastPatience ?? maxPatience,
+    maxPatience,
+    endReason: (session.endReason as EndReason | null) ?? null,
     startedAt: session.startedAt.toISOString(),
     completedAt: session.completedAt?.toISOString() ?? null,
   };
@@ -156,7 +169,7 @@ async function releaseLock(sessionId: string) {
 export async function sendMessage(
   actor: Actor,
   id: string,
-  input: { text: string; clientMessageId: string; inputMode?: "voice" | "text" },
+  input: { text: string; clientMessageId: string; inputMode?: "voice" | "text"; speechMs?: number },
 ): Promise<{ session: SessionView; wantsToEnd: boolean }> {
   const text = input.text.replace(/\s+/g, " ").trim();
   if (!text) throw new AppError("bad_request", "Please type or say something first.");
@@ -181,19 +194,29 @@ export async function sendMessage(
       const answered = messages.some((m) => m.speaker === "ai" && m.turn === userMessage!.turn);
       if (answered) {
         const fresh = await loadOwned(actor, id);
-        return { session: toView(fresh, scenario), wantsToEnd: fresh.userTurns >= fresh.maxTurns };
+        return { session: toView(fresh, scenario), wantsToEnd: fresh.endReason !== null || fresh.userTurns >= fresh.maxTurns };
       }
     } else {
       const last = messages[messages.length - 1];
-      if (last?.speaker === "user") {
+      // On a voice call, what they said most recently is what counts: a line the client never
+      // answered (e.g. the AI timed out) is replaced rather than blocking the call.
+      const replacing = last?.speaker === "user" && input.inputMode === "voice" ? last : null;
+      if (last?.speaker === "user" && !replacing) {
         throw new AppError("conflict", "Your previous message hasn't had a reply yet. Retry it before sending another.");
       }
-      if (session.userTurns >= session.maxTurns) {
+      if (session.userTurns >= session.maxTurns && !replacing) {
         throw new AppError("turn_limit_reached", "You've reached the last turn. End the practice to see your feedback.");
+      }
+      if (session.endReason) {
+        throw new AppError("conflict", "This conversation has ended. Get your feedback to see how you did.");
       }
       await assertCanSendMessage(actor);
 
-      const turn = session.userTurns + 1;
+      const turn = replacing ? replacing.turn : session.userTurns + 1;
+      if (replacing) {
+        await db.message.delete({ where: { id: replacing.id } });
+        messages.pop();
+      }
       [userMessage] = await db.$transaction([
         db.message.create({
           data: {
@@ -203,6 +226,7 @@ export async function sendMessage(
             turn,
             clientMessageId: input.clientMessageId,
             inputMode: input.inputMode ?? "text",
+            speechMs: input.inputMode === "voice" ? (input.speechMs ?? null) : null,
           },
         }),
         db.practiceSession.update({ where: { id: session.id }, data: { userTurns: turn } }),
@@ -211,9 +235,12 @@ export async function sendMessage(
     }
 
     const lastAi = [...messages].reverse().find((m) => m.speaker === "ai");
+    const maxPatience = scenarioPatience(scenario);
     const state = {
       mood: isMood(lastAi?.mood) ? lastAi.mood : scenario.opening_mood,
       notes: lastAi?.privateNotes ?? null,
+      patience: lastAi?.patience ?? maxPatience,
+      maxPatience,
     };
 
     let reply;
@@ -233,16 +260,22 @@ export async function sendMessage(
       throw err;
     }
 
-    await db.message.create({
-      data: {
-        sessionId: session.id,
-        speaker: "ai",
-        text: reply.reply,
-        turn: userMessage.turn,
-        mood: reply.mood,
-        privateNotes: reply.notes,
-      },
-    });
+    await db.$transaction([
+      db.message.create({
+        data: {
+          sessionId: session.id,
+          speaker: "ai",
+          text: reply.reply,
+          turn: userMessage.turn,
+          mood: reply.mood,
+          patience: reply.patience,
+          privateNotes: reply.notes,
+        },
+      }),
+      ...(reply.endReason
+        ? [db.practiceSession.update({ where: { id: session.id }, data: { endReason: reply.endReason, endedAt: new Date() } })]
+        : []),
+    ]);
     const fresh = await loadOwned(actor, id);
     return { session: toView(fresh, scenario), wantsToEnd: reply.wantsToEnd };
   } finally {
@@ -259,10 +292,12 @@ export async function requestScorecard(actor: Actor, id: string): Promise<Sessio
   if (session.status === "scoring" && session.scoringStartedAt && Date.now() - session.scoringStartedAt.getTime() < SCORING_STALE_MS) {
     return toView(session, scenario);
   }
-  if (session.userTurns < scenario.min_turns_for_scorecard) {
+  // A conversation the client concluded (e.g. they ran out of patience) is scored however short it was.
+  const minTurns = session.endReason ? 1 : scenario.min_turns_for_scorecard;
+  if (session.userTurns < minTurns) {
     throw new AppError(
       "too_short",
-      `This session is too short for reliable feedback. Reply at least ${scenario.min_turns_for_scorecard} times to get a scorecard.`,
+      `This session is too short for reliable feedback. Reply at least ${minTurns} times to get a scorecard.`,
     );
   }
   if (session.scoringAttempts >= limits.scoringAttemptsPerSession) {
@@ -299,6 +334,7 @@ export async function requestScorecard(actor: Actor, id: string): Promise<Sessio
       language: session.language as ConversationLanguage,
       messages: messages.map((m) => ({ speaker: m.speaker, text: m.text, turn: m.turn })),
       hintsUsed: session.hintsUsed,
+      endReason: session.endReason,
       sessionId: session.id,
       actorType: actor.type,
     });

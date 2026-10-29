@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { looksLikeLeak, parseRoleplayOutput, sanitizeReply } from "@/lib/roleplay/engine";
+import { concludeTurn, looksLikeLeak, parseRoleplayOutput, sanitizeReply } from "@/lib/roleplay/engine";
 import { buildRoleplaySystemPrompt } from "@/lib/roleplay/prompt";
 import { buildScoringSystemPrompt, formatTranscript } from "@/lib/scoring/prompt";
 import { buildHintPrompt } from "@/lib/roleplay/hint";
@@ -26,7 +26,12 @@ describe("roleplay prompt", () => {
   });
 
   it("feeds the client's mood and private memory back in", () => {
-    const p = buildRoleplaySystemPrompt(scenario, "en", { userTurn: 3, maxTurns: 7 }, { mood: "warming", notes: "They offered 4,200 with no scope cut." });
+    const p = buildRoleplaySystemPrompt(scenario, "en", { userTurn: 3, maxTurns: 7 }, {
+      mood: "warming",
+      notes: "They offered 4,200 with no scope cut.",
+      patience: 2,
+      maxPatience: 5,
+    });
     expect(p).toContain("Mood: warming");
     expect(p).toContain("They offered 4,200 with no scope cut.");
     expect(p).toMatch(/Shift your mood gradually/);
@@ -43,12 +48,15 @@ describe("roleplay prompt", () => {
 
 describe("roleplay output handling", () => {
   it("parses valid output and rejects junk", () => {
-    expect(parseRoleplayOutput('{"reply":"Fine.","mood":"warming","notes":"n","end_conversation":true}')).toEqual({
+    expect(parseRoleplayOutput('{"reply":"Fine.","mood":"warming","patience":"lose_1","notes":"n","end_conversation":true}')).toEqual({
       reply: "Fine.",
       end: true,
       mood: "warming",
+      patience: "lose_1",
       notes: "n",
     });
+    // Unknown patience changes count as no change.
+    expect(parseRoleplayOutput('{"reply":"Ok.","patience":"lose_9"}')).toMatchObject({ patience: null });
     // Unknown moods are ignored rather than trusted.
     expect(parseRoleplayOutput('{"reply":"Ok.","mood":"ecstatic","notes":""}')).toMatchObject({ mood: null, notes: null });
     expect(parseRoleplayOutput('{"reply":""}')).toBeNull();
@@ -119,5 +127,30 @@ describe("voice helpers", () => {
     const chunks = splitForSpeech("One. Two? Three! " + "Long sentence here. ".repeat(20), 60);
     expect(chunks.every((c) => c.length <= 60)).toBe(true);
     expect(chunks.join(" ")).toContain("One. Two? Three!");
+  });
+});
+
+describe("patience and ending the call", () => {
+  const base = { patience: 3, maxPatience: 5, modelEnded: false, userTurn: 2, maxTurns: 6 };
+
+  it("moves patience within its bounds", () => {
+    expect(concludeTurn({ ...base, change: "lose_1" })).toEqual({ patience: 2, endReason: null });
+    expect(concludeTurn({ ...base, patience: 5, change: "gain_1" })).toEqual({ patience: 5, endReason: null });
+    expect(concludeTurn({ ...base, change: null })).toEqual({ patience: 3, endReason: null });
+  });
+
+  it("ends the call when patience runs out, even if the model didn't", () => {
+    expect(concludeTurn({ ...base, patience: 1, change: "lose_2" })).toEqual({ patience: 0, endReason: "patience_exhausted" });
+  });
+
+  it("ends when the client wraps up or the turns run out", () => {
+    expect(concludeTurn({ ...base, change: "same", modelEnded: true }).endReason).toBe("client_ended");
+    expect(concludeTurn({ ...base, change: "same", userTurn: 6 }).endReason).toBe("turn_limit");
+  });
+
+  it("tells the client its patience", () => {
+    const p = buildRoleplaySystemPrompt(scenario, "en", { userTurn: 3, maxTurns: 7 }, { mood: "skeptical", notes: null, patience: 1, maxPatience: 5 });
+    expect(p).toContain("Patience: 1 of 5");
+    expect(p).toMatch(/one more weak move and you end the call/);
   });
 });

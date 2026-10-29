@@ -21,8 +21,8 @@ let anonA: Actor;
 let anonB: Actor;
 let userA: Actor;
 
-const reply = (text: string, end = false, mood = "skeptical", notes = "") =>
-  JSON.stringify({ reply: text, mood, notes, end_conversation: end });
+const reply = (text: string, end = false, mood = "skeptical", notes = "", patience = "same") =>
+  JSON.stringify({ reply: text, mood, patience, notes, end_conversation: end });
 const id = () => crypto.randomUUID();
 
 async function expectCode(p: Promise<unknown>, code: string) {
@@ -160,6 +160,52 @@ describe("practice sessions", () => {
     for (let i = 0; i < s.maxTurns; i++) await sendMessage(anonA, s.id, { text: `turn ${i}`, clientMessageId: id() });
     expect(fake.calls.at(-1)?.system).toMatch(/FINAL exchange/);
     await expectCode(sendMessage(anonA, s.id, { text: "one more", clientMessageId: id() }), "turn_limit_reached");
+  });
+
+  it("on a voice call, a new turn replaces one the client never answered", async () => {
+    const s = await createSession(anonA, "ip-a", { scenarioId: "pricing-negotiation", language: "en" });
+    fake.push(new LLMError("timeout", "slow"));
+    await expect(sendMessage(anonA, s.id, { text: "first try", clientMessageId: id(), inputMode: "voice" })).rejects.toBeTruthy();
+    expect((await getSessionView(anonA, s.id)).pendingRetry?.text).toBe("first try");
+
+    const r = await sendMessage(anonA, s.id, { text: "second try", clientMessageId: id(), inputMode: "voice", speechMs: 2000 });
+    const userLines = r.session.messages.filter((m) => m.speaker === "user");
+    expect(userLines.map((m) => m.text)).toEqual(["second try"]);
+    expect(r.session.userTurns).toBe(1);
+    expect(r.session.pendingRetry).toBeNull();
+
+    // Typed replies still have to retry the unanswered message first.
+    fake.push(new LLMError("timeout", "slow"));
+    await expect(sendMessage(anonA, s.id, { text: "typed", clientMessageId: id() })).rejects.toBeTruthy();
+    await expectCode(sendMessage(anonA, s.id, { text: "typed again", clientMessageId: id() }), "conflict");
+  });
+
+  it("ends the conversation when the client runs out of patience", async () => {
+    const s = await createSession(anonA, "ip-a", { scenarioId: "missed-deadline", language: "en" });
+    expect(s.patience).toBe(s.maxPatience);
+    fake.push(reply("That's not good enough.", false, "frustrated", "", "lose_2"));
+    const first = await sendMessage(anonA, s.id, { text: "whatever", clientMessageId: id() });
+    expect(first.session.patience).toBe(s.maxPatience - 2);
+    expect(first.wantsToEnd).toBe(false);
+
+    fake.push(reply("I'm done here.", false, "frustrated", "", "lose_2"));
+    const second = await sendMessage(anonA, s.id, { text: "not my problem", clientMessageId: id() });
+    expect(second.session.patience).toBe(0);
+    expect(second.wantsToEnd).toBe(true);
+    expect(second.session.endReason).toBe("patience_exhausted");
+
+    // The call is over: no more messages, but it can be scored despite being short.
+    await expectCode(sendMessage(anonA, s.id, { text: "wait", clientMessageId: id() }), "conflict");
+    fake.push(validScorecard());
+    expect((await requestScorecard(anonA, s.id)).status).toBe("scored");
+  });
+
+  it("closes the conversation when the client wraps it up", async () => {
+    const s = await createSession(anonA, "ip-a", { scenarioId: "pricing-negotiation", language: "en" });
+    fake.push(reply("Great, send the proposal by Friday. Bye!", true, "cooperative"));
+    const r = await sendMessage(anonA, s.id, { text: "I'll send it Friday", clientMessageId: id() });
+    expect(r.session.endReason).toBe("client_ended");
+    await expectCode(sendMessage(anonA, s.id, { text: "one more thing", clientMessageId: id() }), "conflict");
   });
 
   it("refuses to score a session that is too short", async () => {

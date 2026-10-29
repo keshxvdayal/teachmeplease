@@ -1,0 +1,18 @@
+# Host networking lets WebRTC use the server's own UDP ports for call audio.
+services:
+  voice-agent:
+    build: .
+    network_mode: host
+    env_file: .env
+    restart: unless-stopped
+  caddy:
+    image: caddy:2.8.4
+    network_mode: host
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    restart: unless-stopped
+volumes:
+  caddy_data:

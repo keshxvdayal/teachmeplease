@@ -25,7 +25,9 @@
   ],
   "opening_line": "Things are looking great so far! Oh, while I have you — could we add a few small extras? A loyalty points thing, a blog, and newsletter sign-up. Should be pretty quick, right? Lots of sites have them.",
   "opening_mood": "cooperative",
-  "voice": { "gender": "male", "rate": 1.08, "pitch": 1.0 },
+  "patience": 5,
+  "call_direction": "incoming",
+  "voice": { "gender": "male", "rate": 1.08, "pitch": 1.0, "kokoro": "bm_fable" },
   "localizations": {
     "hi": {
       "persona_name": "विकास शर्मा",

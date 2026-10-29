@@ -83,6 +83,31 @@ describe("GeminiProvider", () => {
     expect(urls).toHaveLength(2);
   });
 
+  it("walks a fallback chain, and skips a rate-limited model until it cools down", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url.split("/models/")[1].split(":")[0]);
+      return url.includes("/c:") ? ok({ candidates: [{ content: { parts: [{ text: "from c" }] } }] }) : new Response("{}", { status: 429 });
+    }) as unknown as typeof fetch;
+    const p = new GeminiProvider("key", "a", fetchImpl, "b, c");
+    expect((await p.generate(req)).text).toBe("from c");
+    expect(urls).toEqual(["a", "b", "c"]);
+    urls.length = 0;
+    await p.generate(req);
+    expect(urls).toEqual(["c"]);
+  });
+
+  it("moves on when a model is too slow, within the overall time budget", async () => {
+    const fetchImpl = ((url: string, init: RequestInit) =>
+      url.includes("/slow:")
+        ? new Promise((_r, reject) => init.signal!.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }))))
+        : Promise.resolve(ok({ candidates: [{ content: { parts: [{ text: "fast" }] } }] }))) as unknown as typeof fetch;
+    const started = Date.now();
+    const r = await new GeminiProvider("key", "slow", fetchImpl, "fast").generate({ ...req, timeoutMs: 3000 });
+    expect(r.text).toBe("fast");
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("does not fall back on errors a second model can't fix", async () => {
     const fetchImpl = (async () => new Response("", { status: 403 })) as unknown as typeof fetch;
     await expect(new GeminiProvider("key", "a", fetchImpl, "b").generate(req)).rejects.toMatchObject({ code: "config" });
@@ -90,7 +115,8 @@ describe("GeminiProvider", () => {
 
   it("uses thinking levels for Gemini 3 and budgets for 2.5", () => {
     expect(thinkingConfigFor("gemini-2.5-flash", 0)).toEqual({ thinkingBudget: 0 });
-    expect(thinkingConfigFor("gemini-3.5-flash-lite", 0)).toEqual({ thinkingLevel: "low" });
+    expect(thinkingConfigFor("gemini-3.5-flash-lite", 0)).toEqual({ thinkingLevel: "minimal" });
+    expect(thinkingConfigFor("gemini-3-pro", 0)).toEqual({ thinkingLevel: "low" });
     expect(thinkingConfigFor("gemini-3.5-flash-lite", 1024)).toBeUndefined();
     expect(thinkingConfigFor("gemini-2.5-flash", undefined)).toBeUndefined();
   });

@@ -80,6 +80,9 @@ model PracticeSession {
   scoringVersion  String?
   model           String?
   statusDetail    String?
+  /// Set when the conversation itself has concluded: "client_ended", "patience_exhausted" or "turn_limit".
+  /// No more messages are accepted after this.
+  endReason       String?
   startedAt       DateTime          @default(now()) @db.Timestamptz
   endedAt         DateTime?         @db.Timestamptz
   completedAt     DateTime?         @db.Timestamptz
@@ -106,8 +109,12 @@ model Message {
   // 0 = AI opening line; user turn N is answered by AI turn N.
   turn            Int
   inputMode       String?
+  /// Voice turns only: how long the learner held the talk button, for pace (words per minute).
+  speechMs        Int?
   // AI messages only: the client's mood after this reply, and its private memory (never sent to the browser).
   mood            String?
+  /// AI messages only: the client's remaining patience after this reply.
+  patience        Int?
   privateNotes    String?
   clientMessageId String?
   createdAt       DateTime        @default(now()) @db.Timestamptz

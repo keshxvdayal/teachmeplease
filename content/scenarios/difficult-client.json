@@ -34,10 +34,13 @@
   ],
   "opening_line": "Look, I'll be honest, I'm frustrated. We're nowhere near done, my investor demo is in ten days, and I still don't have the rewards screens. I thought you understood how important this was. What's going on?",
   "opening_mood": "frustrated",
+  "patience": 4,
+  "call_direction": "incoming",
   "voice": {
     "gender": "female",
     "rate": 1.08,
-    "pitch": 1.0
+    "pitch": 1.0,
+    "kokoro": "af_bella"
   },
   "localizations": {
     "hi": {

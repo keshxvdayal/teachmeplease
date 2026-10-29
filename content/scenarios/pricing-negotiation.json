@@ -34,10 +34,13 @@
   ],
   "opening_line": "Thanks for sending the proposal over. Honestly, I like the approach — but 4,800 is well above what we were expecting. Another freelancer quoted us around 2,500. Is there any way you can bring this down significantly?",
   "opening_mood": "skeptical",
+  "patience": 5,
+  "call_direction": "incoming",
   "voice": {
     "gender": "male",
     "rate": 1.0,
-    "pitch": 0.95
+    "pitch": 0.95,
+    "kokoro": "am_fenrir"
   },
   "localizations": {
     "hi": {

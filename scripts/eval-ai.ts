@@ -8,13 +8,14 @@ import { getScenario } from "../src/lib/scenarios";
 import { localizedPersona } from "../src/lib/scenarios";
 import { getProvider, LLMError, type ChatTurn, type GenerateRequest } from "../src/lib/ai";
 import { buildRoleplaySystemPrompt, roleplayOutputSchema } from "../src/lib/roleplay/prompt";
-import { looksLikeLeak, parseRoleplayOutput, sanitizeReply } from "../src/lib/roleplay/engine";
+import { concludeTurn, looksLikeLeak, parseRoleplayOutput, sanitizeReply } from "../src/lib/roleplay/engine";
 import { buildScoringSystemPrompt, formatTranscript, type ScoringMessage } from "../src/lib/scoring/prompt";
 import { buildScorecard } from "../src/lib/scoring/engine";
 import { scorecardJsonSchema } from "../src/lib/scoring/schema";
 import type { ConversationLanguage } from "../src/lib/config/languages";
 import type { ClientState } from "../src/lib/roleplay/prompt";
 import { stepMood } from "../src/lib/roleplay/moods";
+import { scenarioPatience } from "../src/lib/scenarios/schema";
 
 interface Case {
   name: string;
@@ -69,6 +70,19 @@ const cases: Case[] = [
       "Whatever. I'll try to get it done.",
     ],
     expect: "Client escalates; low professionalism; goal no.",
+  },
+  {
+    name: "deadline-rude-hangup",
+    scenario: "missed-deadline",
+    language: "en",
+    userTurns: [
+      "Yeah, it's late. Stuff happens.",
+      "I don't know when it'll be done. When it's done, I guess.",
+      "Honestly you're overreacting, it's just a few days.",
+      "Can you stop asking me the same thing?",
+      "Fine, whatever you want.",
+    ],
+    expect: "Patience drains fast and the client ends the call (patience_exhausted) before the last turn.",
   },
   {
     name: "payment-hinglish",
@@ -138,7 +152,8 @@ async function run() {
     const persona = localizedPersona(scenario, c.language);
     const messages: ScoringMessage[] = [{ speaker: "ai", text: persona.openingLine, turn: 0 }];
     const issues: string[] = [];
-    let state: ClientState = { mood: scenario.opening_mood, notes: null };
+    const maxPatience = scenarioPatience(scenario);
+    let state: ClientState = { mood: scenario.opening_mood, notes: null, patience: maxPatience, maxPatience };
     const moods: string[] = [state.mood];
     console.log(`\n=== ${c.name} (${c.scenario}, ${c.language}) ===`);
     console.log(`${persona.name}: ${persona.openingLine}`);
@@ -163,9 +178,21 @@ async function run() {
       if (looksLikeLeak(text)) issues.push(`turn ${turn}: possible role break`);
       if (c.language === "hinglish" && /[ऀ-ॿ]/.test(text)) issues.push(`turn ${turn}: Devanagari in Hinglish reply`);
       messages.push({ speaker: "ai", text, turn });
-      state = { mood: parsed?.mood ? stepMood(state.mood, parsed.mood) : state.mood, notes: parsed?.notes ?? state.notes };
+      const { patience, endReason } = concludeTurn({
+        patience: state.patience,
+        maxPatience,
+        change: parsed?.patience ?? null,
+        modelEnded: parsed?.end ?? false,
+        userTurn: turn,
+        maxTurns: scenario.max_turns,
+      });
+      state = { mood: parsed?.mood ? stepMood(state.mood, parsed.mood) : state.mood, notes: parsed?.notes ?? state.notes, patience, maxPatience };
       moods.push(state.mood);
-      console.log(`${persona.name} (${state.mood}): ${text}  [${r.latencyMs}ms]`);
+      console.log(`${persona.name} (${state.mood}, patience ${patience}/${maxPatience}): ${text}  [${r.latencyMs}ms]`);
+      if (endReason) {
+        console.log(`   -- call ended: ${endReason}`);
+        break;
+      }
       if (state.notes) console.log(`   notes: ${state.notes}`);
     }
 

@@ -1,0 +1,16 @@
+[project]
+name = "teachmeplease-local-voice"
+version = "0.1.0"
+description = "Speech service (Whisper + Kokoro) for TeachMePlease voice calls"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "python-dotenv",
+    "fastapi",
+    "uvicorn",
+    "pipecat-ai[piper,kokoro,silero,whisper,webrtc]>=1.14.0",
+    # MLX runs Whisper on the Apple Silicon GPU; Linux servers use faster-whisper instead.
+    "pipecat-ai[mlx-whisper]>=1.14.0; sys_platform == 'darwin'",
+]
+
+[tool.ruff]
+line-length = 100
