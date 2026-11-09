@@ -40,7 +40,7 @@
     "gender": "female",
     "rate": 1.08,
     "pitch": 1.0,
-    "kokoro": "af_bella"
+    "gemini_voice": "Pulcherrima"
   },
   "localizations": {
     "hi": {
@@ -88,11 +88,7 @@
     "objection_handling": "How well they handle blame and new demands: acknowledge, clarify, offer options.",
     "closing_outcome": "Is there an agreed plan with deliverables, dates and how the new work is handled?"
   },
-  "language_modes": [
-    "en",
-    "hi",
-    "hinglish"
-  ],
+  "language_modes": ["en", "hi", "hinglish", "mr", "bn", "ta", "te", "es", "fr", "de", "pt", "ja"],
   "default_language": "en",
   "max_turns": 7,
   "min_turns_for_scorecard": 3

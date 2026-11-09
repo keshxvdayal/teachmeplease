@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { MOODS } from "@/lib/roleplay/moods";
+import { getLanguage, LANGUAGE_IDS } from "@/lib/config/languages";
+import { GEMINI_VOICES } from "@/lib/config/voices";
 
-const languageId = z.enum(["en", "hi", "hinglish"]);
+const languageId = z.enum(LANGUAGE_IDS);
 
 const nonEmpty = z.string().trim().min(1);
 
@@ -46,13 +48,13 @@ export const scenarioSchema = z
     opening_mood: z.enum(MOODS).default("neutral"),
     // How many weak moves the persona tolerates before ending the call. Defaults by difficulty.
     patience: z.number().int().min(2).max(10).optional(),
-    // Used to pick a matching browser voice; rate and pitch shape the character slightly.
     voice: z.object({
       gender: z.enum(["female", "male"]),
+      // Only used by the browser's fallback voice: rate and pitch shape the character slightly.
       rate: z.number().min(0.7).max(1.3).default(1),
       pitch: z.number().min(0.5).max(1.5).default(1),
-      // The voice agent's Kokoro voice; its prefix sets the accent (a* American, b* British).
-      kokoro: z.string().regex(/^[a-z]{2}_[a-z]+$/).optional(),
+      // Gemini text-to-speech prebuilt voice. Defaults by gender when omitted.
+      gemini_voice: z.enum(GEMINI_VOICES).optional(),
     }),
     // Who places the call: "outgoing" when the learner rings the client, "incoming" when the client rings them.
     call_direction: z.enum(["outgoing", "incoming"]).default("outgoing"),
@@ -80,8 +82,8 @@ export const scenarioSchema = z
     message: "min_turns_for_scorecard must not exceed max_turns",
   })
   .refine(
-    (s) => s.language_modes.every((l) => l === "en" || s.localizations[l]?.opening_line),
-    { message: "every non-English language mode needs a localization with an opening_line" },
+    (s) => s.language_modes.every((l) => l === "en" || getLanguage(l)?.autoTranslate || s.localizations[l]?.opening_line),
+    { message: "every hand-localized language mode (hi, hinglish) needs a localization with an opening_line" },
   );
 
 export type Track = z.infer<typeof trackSchema>;

@@ -27,7 +27,7 @@
   "opening_mood": "warming",
   "patience": 6,
   "call_direction": "incoming",
-  "voice": { "gender": "male", "rate": 1.12, "pitch": 1.05, "kokoro": "am_puck" },
+  "voice": { "gender": "male", "rate": 1.12, "pitch": 1.05, "gemini_voice": "Sadachbia" },
   "localizations": {
     "hi": {
       "persona_name": "करण सिंह",
@@ -74,7 +74,7 @@
     "objection_handling": "How they respond to urgency, flattery and pushback on the fee.",
     "closing_outcome": "Did they agree specific terms that are realistic for both sides?"
   },
-  "language_modes": ["en", "hi", "hinglish"],
+  "language_modes": ["en", "hi", "hinglish", "mr", "bn", "ta", "te", "es", "fr", "de", "pt", "ja"],
   "default_language": "en",
   "max_turns": 5,
   "min_turns_for_scorecard": 3

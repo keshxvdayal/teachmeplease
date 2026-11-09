@@ -4,7 +4,7 @@ import { buildRoleplaySystemPrompt } from "@/lib/roleplay/prompt";
 import { buildScoringSystemPrompt, formatTranscript } from "@/lib/scoring/prompt";
 import { buildHintPrompt } from "@/lib/roleplay/hint";
 import { stepMood } from "@/lib/roleplay/moods";
-import { pickVoice, splitForSpeech } from "@/lib/client/use-speech-synthesis";
+import { pickVoice, splitForSpeech } from "@/lib/client/voice-player";
 import { getScenario } from "@/lib/scenarios";
 
 const scenario = getScenario("pricing-negotiation")!;
@@ -54,7 +54,11 @@ describe("roleplay output handling", () => {
       mood: "warming",
       patience: "lose_1",
       notes: "n",
+      tone: null,
     });
+    // The tone is kept as a short style note, never anything that could be read out as words.
+    expect(parseRoleplayOutput('{"reply":"Ok.","tone":"Gently Apologetic!"}')).toMatchObject({ tone: "gently apologetic" });
+    expect(parseRoleplayOutput(`{"reply":"Ok.","tone":"${"very ".repeat(20)}"}`)).toMatchObject({ tone: null });
     // Unknown patience changes count as no change.
     expect(parseRoleplayOutput('{"reply":"Ok.","patience":"lose_9"}')).toMatchObject({ patience: null });
     // Unknown moods are ignored rather than trusted.
@@ -121,6 +125,15 @@ describe("voice helpers", () => {
     expect(pickVoice(voices, "en-US", "female")?.name).toBe("Samantha");
     expect(pickVoice(voices, "hi-IN", "male")?.name).toBe("Lekha");
     expect(pickVoice(voices, "fr-FR", "male")).toBeNull();
+    expect(pickVoice(voices, "ja-JP", "female")).toBeNull();
+  });
+
+  it("keeps tiny fragments with their sentence so each request speaks something whole", () => {
+    expect(splitForSpeech("Hmm... That's a lot more than we planned. Can you do better?")).toEqual([
+      "Hmm... That's a lot more than we planned.",
+      "Can you do better?",
+    ]);
+    expect(splitForSpeech("ठीक है। मुझे सोचने दीजिए।")).toHaveLength(1);
   });
 
   it("splits long replies into sentence chunks", () => {

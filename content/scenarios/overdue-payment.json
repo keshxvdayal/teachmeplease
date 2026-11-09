@@ -41,7 +41,7 @@
     "gender": "male",
     "rate": 1.05,
     "pitch": 1.0,
-    "kokoro": "bm_george"
+    "gemini_voice": "Achird"
   },
   "localizations": {
     "hi": {
@@ -90,11 +90,7 @@
     "objection_handling": "Do they probe excuses and avoid accepting vague assurances?",
     "closing_outcome": "Did they leave with a specific date, or a concrete follow-up plan with owners and dates?"
   },
-  "language_modes": [
-    "en",
-    "hi",
-    "hinglish"
-  ],
+  "language_modes": ["en", "hi", "hinglish", "mr", "bn", "ta", "te", "es", "fr", "de", "pt", "ja"],
   "default_language": "en",
   "max_turns": 6,
   "min_turns_for_scorecard": 3

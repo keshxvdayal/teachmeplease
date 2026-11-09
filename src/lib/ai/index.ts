@@ -10,7 +10,7 @@ export function getProvider(): LLMProvider {
   if (!provider) {
     provider = new GeminiProvider(
       process.env.GEMINI_API_KEY ?? "",
-      process.env.GEMINI_MODEL || "gemini-2.5-flash",
+      process.env.GEMINI_MODEL || "gemini-3.5-flash",
       fetch,
       process.env.GEMINI_FALLBACK_MODEL || undefined,
     );

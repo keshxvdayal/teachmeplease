@@ -73,7 +73,7 @@ describe("practice sessions", () => {
 
   it("rejects unknown scenarios and unsupported languages", async () => {
     await expectCode(createSession(anonA, "ip-a", { scenarioId: "nope", language: "en" }), "not_found");
-    await expectCode(createSession(anonA, "ip-a", { scenarioId: "overdue-payment", language: "fr" }), "bad_request");
+    await expectCode(createSession(anonA, "ip-a", { scenarioId: "overdue-payment", language: "xx" }), "bad_request");
   });
 
   it("runs a conversation turn and returns the AI reply", async () => {

@@ -1,5 +1,5 @@
 import { limits } from "@/lib/config/limits";
-import type { ConversationLanguage } from "@/lib/config/languages";
+import { getLanguage, type ConversationLanguage } from "@/lib/config/languages";
 import { localizedPersona } from "@/lib/scenarios";
 import { scenarioPatience, type Scenario } from "@/lib/scenarios/schema";
 import type { ChatTurn } from "@/lib/ai";
@@ -29,6 +29,8 @@ export interface ClientReply {
   /** Remaining patience after this reply, 0..maxPatience. */
   patience: number;
   wantsToEnd: boolean;
+  /** How the line should sound when spoken, e.g. "cheerful". Never read aloud. */
+  tone: string | null;
   /** Why the conversation is over, when it is. */
   endReason: EndReason | null;
   model: string;
@@ -61,11 +63,7 @@ const LEAK_PATTERNS = [
   /\bI(?:'m| am) (?:an? )?(?:AI|assistant|chatbot)\b/i,
 ];
 
-const FALLBACK_LINES: Record<ConversationLanguage, string> = {
-  en: "Sorry, I'm not sure what you mean. Can we get back to the point?",
-  hi: "माफ़ कीजिए, मैं समझा नहीं। क्या हम मुद्दे पर वापस आ सकते हैं?",
-  hinglish: "Sorry, main samjha nahi. Kya hum point pe wapas aa sakte hain?",
-};
+const MAX_TONE_CHARS = 40;
 
 export function looksLikeLeak(text: string): boolean {
   return LEAK_PATTERNS.some((p) => p.test(text));
@@ -93,9 +91,9 @@ function escapeRegex(s: string) {
 
 export function parseRoleplayOutput(
   text: string,
-): { reply: string; end: boolean; mood: Mood | null; patience: PatienceChange | null; notes: string | null } | null {
+): { reply: string; end: boolean; mood: Mood | null; patience: PatienceChange | null; notes: string | null; tone: string | null } | null {
   try {
-    const obj = JSON.parse(text) as { reply?: unknown; end_conversation?: unknown; mood?: unknown; patience?: unknown; notes?: unknown };
+    const obj = JSON.parse(text) as { reply?: unknown; end_conversation?: unknown; mood?: unknown; patience?: unknown; notes?: unknown; tone?: unknown };
     if (typeof obj.reply !== "string" || !obj.reply.trim()) return null;
     return {
       reply: obj.reply,
@@ -103,10 +101,18 @@ export function parseRoleplayOutput(
       mood: isMood(obj.mood) ? obj.mood : null,
       patience: (PATIENCE_CHANGES as readonly unknown[]).includes(obj.patience) ? (obj.patience as PatienceChange) : null,
       notes: typeof obj.notes === "string" && obj.notes.trim() ? obj.notes.trim().slice(0, MAX_NOTES_CHARS) : null,
+      tone: cleanTone(obj.tone),
     };
   } catch {
     return null;
   }
+}
+
+/** A short delivery note such as "cheerful" or "gently apologetic"; anything else is dropped. */
+function cleanTone(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const tone = raw.replace(/[^\p{L} ,'-]/gu, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return tone && tone.length <= MAX_TONE_CHARS ? tone : null;
 }
 
 export async function generateClientReply(args: {
@@ -170,6 +176,7 @@ export async function generateClientReply(args: {
           notes: parsed.notes ?? args.state?.notes ?? null,
           patience,
           wantsToEnd: endReason !== null,
+          tone: parsed.tone,
           endReason,
           model: result.model,
         };
@@ -177,11 +184,12 @@ export async function generateClientReply(args: {
     }
   }
   return {
-    reply: FALLBACK_LINES[args.language],
+    reply: getLanguage(args.language)?.fallbackLine ?? "Sorry, can we get back to the point?",
     mood: previousMood,
     notes: args.state?.notes ?? null,
     patience: previousPatience,
     wantsToEnd: args.userTurn >= args.maxTurns,
+    tone: null,
     endReason: args.userTurn >= args.maxTurns ? "turn_limit" : null,
     model: "fallback",
   };

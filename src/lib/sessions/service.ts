@@ -4,10 +4,11 @@ import { limits } from "@/lib/config/limits";
 import { getLanguage, isConversationLanguage, type ConversationLanguage } from "@/lib/config/languages";
 import { AppError } from "@/lib/errors";
 import { canAccess, ownedBy, type Actor } from "@/lib/auth/identity";
-import { getScenario, localizedPersona, toPublicScenario } from "@/lib/scenarios";
+import { getScenario, toPublicScenario } from "@/lib/scenarios";
 import { scenarioPatience, type PublicScenario, type Scenario } from "@/lib/scenarios/schema";
 import { generateClientReply, type EndReason } from "@/lib/roleplay/engine";
 import { generateHint, type Hint } from "@/lib/roleplay/hint";
+import { openingLineFor } from "@/lib/roleplay/opening";
 import { isMood, type Mood } from "@/lib/roleplay/moods";
 import { generateScorecard } from "@/lib/scoring/engine";
 import { scorecardSchema, type Scorecard } from "@/lib/scoring/schema";
@@ -132,7 +133,7 @@ export async function createSession(
 
   await assertCanStartSession(actor, ipHash);
 
-  const persona = localizedPersona(scenario, input.language);
+  const openingLine = await openingLineFor(scenario, input.language, actor.type);
   const session = await db.practiceSession.create({
     data: {
       userId: actor.type === "user" ? actor.userId : null,
@@ -144,7 +145,7 @@ export async function createSession(
       language: input.language,
       speechLocale,
       maxTurns: scenario.max_turns,
-      messages: { create: { speaker: "ai", text: persona.openingLine, turn: 0, mood: scenario.opening_mood } },
+      messages: { create: { speaker: "ai", text: openingLine, turn: 0, mood: scenario.opening_mood } },
     },
     include: { messages: true },
   });
@@ -170,7 +171,7 @@ export async function sendMessage(
   actor: Actor,
   id: string,
   input: { text: string; clientMessageId: string; inputMode?: "voice" | "text"; speechMs?: number },
-): Promise<{ session: SessionView; wantsToEnd: boolean }> {
+): Promise<{ session: SessionView; wantsToEnd: boolean; tone: string | null }> {
   const text = input.text.replace(/\s+/g, " ").trim();
   if (!text) throw new AppError("bad_request", "Please type or say something first.");
   if (text.length > limits.maxUserMessageChars) {
@@ -194,7 +195,7 @@ export async function sendMessage(
       const answered = messages.some((m) => m.speaker === "ai" && m.turn === userMessage!.turn);
       if (answered) {
         const fresh = await loadOwned(actor, id);
-        return { session: toView(fresh, scenario), wantsToEnd: fresh.endReason !== null || fresh.userTurns >= fresh.maxTurns };
+        return { session: toView(fresh, scenario), wantsToEnd: fresh.endReason !== null || fresh.userTurns >= fresh.maxTurns, tone: null };
       }
     } else {
       const last = messages[messages.length - 1];
@@ -277,7 +278,8 @@ export async function sendMessage(
         : []),
     ]);
     const fresh = await loadOwned(actor, id);
-    return { session: toView(fresh, scenario), wantsToEnd: reply.wantsToEnd };
+    // The tone is only a speaking style for the client's voice; it isn't stored or shown.
+    return { session: toView(fresh, scenario), wantsToEnd: reply.wantsToEnd, tone: reply.tone };
   } finally {
     await releaseLock(session.id);
   }

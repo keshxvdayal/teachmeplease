@@ -19,8 +19,7 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@pipecat-ai/client-js": "^1.15.0",
-    "@pipecat-ai/small-webrtc-transport": "^1.11.1",
+    "@google/genai": "^2.32.0",
     "@prisma/client": "6.19.3",
     "lucide-react": "0.577.0",
     "next": "15.5.28",

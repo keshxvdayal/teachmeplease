@@ -41,7 +41,7 @@
     "gender": "female",
     "rate": 0.97,
     "pitch": 0.98,
-    "kokoro": "bf_isabella"
+    "gemini_voice": "Sulafat"
   },
   "localizations": {
     "hi": {
@@ -90,11 +90,7 @@
     "objection_handling": "How they respond to budget pressure and the hint of looking elsewhere.",
     "closing_outcome": "Is there an agreed rate and date (or a clear path to CFO approval)?"
   },
-  "language_modes": [
-    "en",
-    "hi",
-    "hinglish"
-  ],
+  "language_modes": ["en", "hi", "hinglish", "mr", "bn", "ta", "te", "es", "fr", "de", "pt", "ja"],
   "default_language": "en",
   "max_turns": 6,
   "min_turns_for_scorecard": 3

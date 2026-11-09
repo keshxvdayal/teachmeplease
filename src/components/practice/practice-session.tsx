@@ -26,15 +26,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api, ApiRequestError, trackEvent, type ApiError } from "@/lib/client/api";
 import { useSpeechRecognition, voiceErrorMessages, type VoiceErrorKind } from "@/lib/client/use-speech-recognition";
-import { useSpeechSynthesis } from "@/lib/client/use-speech-synthesis";
-import { usePipecatVoice } from "@/lib/client/use-pipecat-voice";
+import { useVoiceOutput } from "@/lib/client/use-voice-output";
+import { usePushToTalk } from "@/lib/client/use-push-to-talk";
+import { languageLabel } from "@/lib/config/languages";
+import { TONE_BY_MOOD, voiceFor } from "@/lib/config/voices";
 import { uuid } from "@/lib/client/uuid";
 import { PersonaAvatar } from "@/components/practice/persona-avatar";
 import { playConnected, playHangup, playRingback, playRingtone, unlockCallSounds } from "@/lib/client/call-sounds";
 import { MOOD_LABELS, type Mood } from "@/lib/roleplay/moods";
 import type { SessionView } from "@/lib/sessions/service";
 
-const LANGUAGE_LABELS: Record<string, string> = { en: "English", hi: "Hindi", hinglish: "Hinglish" };
 const AUTOPLAY_KEY = "tmp_autoplay";
 // A press held longer than this is treated as hold-to-talk; shorter presses toggle.
 const HOLD_THRESHOLD_MS = 350;
@@ -55,15 +56,6 @@ const END_TITLES: Record<NonNullable<SessionView["endReason"]>, (persona: string
   client_ended: (p) => `${p} wrapped up the call.`,
   patience_exhausted: (p) => `${p} ran out of patience and ended the call.`,
   turn_limit: () => "That's the end of the conversation.",
-};
-// Sounds the client makes while thinking of a reply on a voice call, by mood. Real people fill
-// the gap, and it covers the moment the reply takes to generate. Never when they're annoyed.
-const THINKING_SOUNDS: Record<Mood, string[]> = {
-  frustrated: [],
-  skeptical: ["Hmm..."],
-  neutral: ["Hmm...", "Okay..."],
-  warming: ["Okay...", "Right...", "Mm, okay..."],
-  cooperative: ["Right...", "Okay...", "Mm, okay..."],
 };
 // How long the outgoing call rings before the client picks up (about one and a half rings).
 const MIN_RING_MS = 4200;
@@ -131,46 +123,47 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
   const speechLocale = session.speechLocale ?? ttsLocale;
   const mood = session.clientMood;
 
-  const tts = useSpeechSynthesis(ttsLocale, session.scenario.voice);
-  // The voice agent only listens and speaks; each turn goes through the same API as typed
-  // replies, so mood, patience, the end of the call and feedback work the same way.
-  const pipecat = usePipecatVoice(
-    {
-      endpoint: process.env.NEXT_PUBLIC_PIPECAT_URL ?? "http://127.0.0.1:7860/api/offer",
-      language: session.language,
-      gender: session.scenario.voice?.gender,
-      voice: session.scenario.voice?.kokoro,
-    },
-    (text, speechMs) => {
-      if (!text) {
-        setVoiceNotice("Didn't catch that. Hold the button while you speak, then let go.");
-        return;
-      }
-      setVoiceNotice(null);
-      const sounds = THINKING_SOUNDS[session.clientMood];
-      if (sounds.length && Math.random() < 0.5) pipecat.speak(sounds[Math.floor(Math.random() * sounds.length)]);
-      void submit(text, uuid(), "voice", speechMs);
-    },
-    () => setVoiceNotice("That took too long to catch. Hold the button and say it again."),
-  );
+  // The client's voice: Gemini text-to-speech, or the browser's voice if that's unavailable.
+  const tts = useVoiceOutput({
+    voice: voiceFor(session.scenario.voice),
+    locale: ttsLocale,
+    gender: session.scenario.voice.gender,
+    rate: session.scenario.voice.rate,
+    pitch: session.scenario.voice.pitch,
+  });
+  // Hold-to-talk with the browser's speech recognition. Each turn goes through the same API as
+  // typed replies, so mood, patience, the end of the call and feedback work the same way.
+  const ptt = usePushToTalk(speechLocale, (text, speechMs) => {
+    if (!text) {
+      setVoiceNotice("Didn't catch that. Hold the button while you speak, then let go.");
+      return;
+    }
+    setVoiceNotice(null);
+    void submit(text, uuid(), "voice", speechMs);
+  });
+  /** Talking over the client stops them, like on a real call. */
+  const pressTalk = useCallback(() => {
+    tts.stop();
+    ptt.press();
+  }, [tts.stop, ptt.press]);
 
   // Hold Space to talk during a voice call, like a walkie-talkie.
-  const pttActive = callMode && pipecat.connected && !showKeyboard && !concluded;
+  const pttActive = callMode && ptt.connected && !showKeyboard && !concluded;
   useEffect(() => {
     if (!pttActive) return;
     const typing = (e: KeyboardEvent) => e.target instanceof HTMLElement && e.target.closest("input, textarea, [contenteditable]") !== null;
     const down = (e: KeyboardEvent) => {
       if (e.code !== "Space" || typing(e)) return;
       e.preventDefault();
-      if (!e.repeat) pipecat.press();
+      if (!e.repeat) pressTalk();
     };
     const up = (e: KeyboardEvent) => {
       if (e.code !== "Space" || typing(e)) return;
       e.preventDefault();
-      pipecat.release();
+      ptt.release();
     };
     // Letting go while the tab is in the background still ends the turn.
-    const blur = () => pipecat.release();
+    const blur = () => ptt.release();
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", blur);
@@ -179,7 +172,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", blur);
     };
-  }, [pttActive, pipecat.press, pipecat.release]);
+  }, [pttActive, pressTalk, ptt.release]);
 
   const onVoiceError = useCallback((kind: VoiceErrorKind) => {
     if (kind !== "no-speech") trackEvent("voice_failure", { reason: kind });
@@ -197,27 +190,27 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
   }, []);
 
   const stt = useSpeechRecognition(speechLocale, onFinal, onVoiceError);
-  const voiceAvailable = pipecat.available === true;
+  const voiceAvailable = ptt.available === true;
 
   const listenHandsFree = useCallback(() => {
     if (!callModeRef.current) return;
-    // The local voice agent listens continuously, so the browser recogniser stays off.
-    if (pipecat.connectedRef.current) return;
+    // On a live call the learner holds the talk button instead.
+    if (ptt.connectedRef.current) return;
     stt.start({ autoStopAfterSilenceMs: SILENCE_MS, noSpeechTimeoutMs: NO_SPEECH_MS });
-  }, [pipecat.connectedRef, stt]);
+  }, [ptt.connectedRef, stt]);
 
-  /** Speaks a client line; in call mode, starts listening as soon as it finishes. */
+  /** Speaks a client line; in hands-free mode, starts listening as soon as it finishes. */
   const sayAloud = useCallback(
-    (id: string, text: string) => {
-      if (pipecat.connectedRef.current) {
-        pipecat.speak(text);
+    (id: string, text: string, tone?: string | null) => {
+      if (ptt.connectedRef.current) {
+        tts.speak(id, text, undefined, tone);
       } else if (callModeRef.current) {
-        tts.speak(id, text, () => setTimeout(listenHandsFree, 250));
+        tts.speak(id, text, () => setTimeout(listenHandsFree, 250), tone);
       } else if (autoplay) {
-        tts.speak(id, text);
+        tts.speak(id, text, undefined, tone);
       }
     },
-    [tts, autoplay, listenHandsFree, pipecat],
+    [tts, autoplay, listenHandsFree, ptt.connectedRef],
   );
 
   useEffect(() => {
@@ -279,7 +272,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     setHint(null);
     setSendingText(text);
     try {
-      const { data } = await api<{ session: SessionView; wantsToEnd: boolean }>(`/api/sessions/${session.id}/messages`, {
+      const { data } = await api<{ session: SessionView; wantsToEnd: boolean; tone: string | null }>(`/api/sessions/${session.id}/messages`, {
         method: "POST",
         json: { text, clientMessageId, inputMode, speechMs },
       });
@@ -287,11 +280,12 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
       setUsedVoice(false);
       const last = data.session.messages[data.session.messages.length - 1];
       if (last?.speaker === "ai") {
-        if (data.wantsToEnd && !pipecat.connectedRef.current) {
+        const tone = data.tone ?? toneOf(last);
+        if (data.wantsToEnd && !ptt.connectedRef.current) {
           // Don't reopen the browser mic once the client has ended the call.
-          if (autoplay || callModeRef.current) tts.speak(last.id, last.text);
+          if (autoplay || callModeRef.current) tts.speak(last.id, last.text, undefined, tone);
         } else {
-          sayAloud(last.id, last.text);
+          sayAloud(last.id, last.text, tone);
         }
       }
     } catch (err) {
@@ -352,7 +346,8 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     }
     const opening = session.messages[0];
     // This click is the user gesture browsers require before audio can play.
-    if (opening?.speaker === "ai" && autoplay) sayAloud(opening.id, opening.text);
+    tts.unlock();
+    if (opening?.speaker === "ai" && autoplay) sayAloud(opening.id, opening.text, toneOf(opening));
     if (!voice) requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
@@ -360,9 +355,13 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
   function placeCall() {
     // This click is the gesture that lets the call sounds play.
     unlockCallSounds();
+    tts.unlock();
     tts.stop();
     if (stt.listening) stt.stop();
     const attempt = ++callAttemptRef.current;
+    // Make the client's first line while the phone rings, so they speak the moment they pick up.
+    const last = session.messages.at(-1);
+    if (last?.speaker === "ai") tts.prefetch(last.text, toneOf(last));
     if (session.scenario.callDirection === "incoming") {
       setCallPhase("waiting");
       setTimeout(() => {
@@ -376,7 +375,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     stopRingRef.current = playRingback();
     // Connect while it rings, so the client picks up as soon as the ring ends.
     const ring = new Promise((r) => setTimeout(r, MIN_RING_MS));
-    void Promise.all([connectVoiceAgent(), ring]).then(([ok]) => {
+    void Promise.all([connectMic(), ring]).then(([ok]) => {
       if (attempt === callAttemptRef.current) goLive(ok);
     });
   }
@@ -385,14 +384,15 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     const attempt = callAttemptRef.current;
     stopRingRef.current?.();
     setCallPhase("connecting");
-    const ok = await connectVoiceAgent();
+    tts.unlock();
+    const ok = await connectMic();
     if (attempt === callAttemptRef.current) goLive(ok);
   }
 
   function declineCall() {
     callAttemptRef.current++;
     stopRingRef.current?.();
-    pipecat.disconnect();
+    ptt.disconnect();
     setCallPhase("idle");
     setCallMode(false);
     callModeRef.current = false;
@@ -404,7 +404,12 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     stopRingRef.current = null;
     if (!ok) {
       setCallPhase("idle");
-      setError({ code: "voice_unavailable", message: "Couldn't reach the voice agent. Make sure it's running, then try again.", status: 503, retryable: false });
+      setError({
+        code: "voice_unavailable",
+        message: ptt.error ?? "Couldn't start the microphone. Allow microphone access, or type instead.",
+        status: 503,
+        retryable: false,
+      });
       return;
     }
     playConnected();
@@ -412,23 +417,23 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     setCallStartedAt(Date.now());
     // The client opens with their latest line (the opening line on a fresh call).
     const last = session.messages.at(-1);
-    if (last?.speaker === "ai") pipecat.speak(last.text);
+    if (last?.speaker === "ai") tts.speak(last.id, last.text, undefined, toneOf(last));
   }
 
   /** Ends the voice call with the hang-up tone. */
   function hangUp() {
     stopRingRef.current?.();
-    if (callPhase === "live" || pipecat.connectedRef.current) void playHangup();
-    pipecat.disconnect();
+    if (callPhase === "live" || ptt.connectedRef.current) void playHangup();
+    ptt.disconnect();
     if (callStartedAt) setCallSeconds(Math.round((Date.now() - callStartedAt) / 1000));
     setCallPhase((p) => (p === "live" ? "ended" : "idle"));
   }
 
-  async function connectVoiceAgent() {
+  async function connectMic() {
     tts.stop();
     if (stt.listening) stt.stop();
     try {
-      await pipecat.connect();
+      await ptt.connect();
       return true;
     } catch {
       setCallMode(false);
@@ -474,7 +479,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     setFeedbackIn(null);
     tts.stop();
     if (stt.listening) stt.stop();
-    if (pipecat.connectedRef.current) hangUp();
+    if (ptt.connectedRef.current) hangUp();
     try {
       await api(`/api/sessions/${session.id}/scorecard`, { method: "POST" });
       router.push(`/session/${session.id}/results`);
@@ -488,7 +493,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
 
   async function exitWithoutFeedback() {
     tts.stop();
-    if (pipecat.connectedRef.current) hangUp();
+    if (ptt.connectedRef.current) hangUp();
     try {
       await api(`/api/sessions/${session.id}/abandon`, { method: "POST" });
     } finally {
@@ -532,31 +537,31 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     }
   }
 
-  const clientSpeaking = pipecat.connected ? pipecat.speaking : tts.speakingId !== null;
+  const clientSpeaking = tts.speakingId !== null;
   const status = useMemo(() => {
     if (scoring) return "Preparing your feedback…";
     if (sending) return `${persona} is thinking…`;
     if (pending) return "Last message wasn't delivered";
     if (concluded) return "The call has ended";
     if (autoSendIn !== null) return `Sending in ${autoSendIn}…`;
-    if (callMode && pipecat.error) return pipecat.error;
-    if (callMode && pipecat.connected) {
-      if (pipecat.holding) return "Listening — release to send";
-      if (pipecat.transcribing) return "Catching your words…";
+    if (callMode && ptt.error) return ptt.error;
+    if (callMode && ptt.connected) {
+      if (ptt.holding) return "Listening — release to send";
+      if (ptt.transcribing) return "Catching your words…";
       if (clientSpeaking) return `${persona} is speaking — hold to interrupt`;
       return "Hold the mic or Space to talk";
     }
-    if (callMode && pipecat.connecting) return `Calling ${persona}…`;
+    if (callMode && ptt.connecting) return `Calling ${persona}…`;
     if (stt.listening) return callMode ? "Listening — pause when you're done" : "Listening…";
     if (clientSpeaking) return `${persona} is speaking — tap the mic to interrupt`;
     if (callMode) return "Tap the mic to talk";
     return "Your turn";
-  }, [scoring, sending, pending, concluded, autoSendIn, stt.listening, clientSpeaking, callMode, persona, pipecat.error, pipecat.connected, pipecat.connecting, pipecat.holding, pipecat.transcribing]);
+  }, [scoring, sending, pending, concluded, autoSendIn, stt.listening, clientSpeaking, callMode, persona, ptt.error, ptt.connected, ptt.connecting, ptt.holding, ptt.transcribing]);
 
   const composerDisabled = sending || !!pending || concluded || scoring;
 
   // Once the call has ended and the last line has been heard, open the feedback automatically.
-  const finalLineDone = !sending && !clientSpeaking && !pipecat.speaking;
+  const finalLineDone = !sending && !clientSpeaking;
   useEffect(() => {
     if (!concluded || !canScore || scoring) return;
     // A pause between sentences can look like the end; restart the countdown if speech resumes.
@@ -604,7 +609,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
     </button>
   );
 
-  /** The client's face; it talks in time with the voice agent's audio when on a call. */
+  /** The client's face; its mouth follows the loudness of Gemini's voice while it plays. */
   const avatar = (size: number, live: boolean) => (
     <PersonaAvatar
       seed={session.scenario.id}
@@ -612,8 +617,8 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
       gender={session.scenario.voice.gender}
       mood={mood}
       size={size}
-      speaking={live && clientSpeaking}
-      levelRef={live && pipecat.connected ? pipecat.botLevelRef : undefined}
+      speaking={live && tts.audible}
+      levelRef={live && tts.measuring ? tts.levelRef : undefined}
       className="rounded-full"
     />
   );
@@ -624,27 +629,27 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
       onPointerDown={(e) => {
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
-        pipecat.press();
+        pressTalk();
       }}
-      onPointerUp={pipecat.release}
-      onPointerCancel={pipecat.release}
-      onLostPointerCapture={pipecat.release}
+      onPointerUp={ptt.release}
+      onPointerCancel={ptt.release}
+      onLostPointerCapture={ptt.release}
       onKeyDown={(e) => {
         if (e.key !== "Enter") return;
         e.preventDefault();
-        if (!e.repeat) pipecat.press();
+        if (!e.repeat) pressTalk();
       }}
-      onKeyUp={(e) => e.key === "Enter" && pipecat.release()}
+      onKeyUp={(e) => e.key === "Enter" && ptt.release()}
       onContextMenu={(e) => e.preventDefault()}
-      disabled={!pipecat.connected || concluded || scoring || sending || pipecat.transcribing}
-      aria-pressed={pipecat.holding}
-      aria-label={pipecat.holding ? "Release to send" : "Hold to talk"}
+      disabled={!ptt.connected || concluded || scoring || sending || ptt.transcribing}
+      aria-pressed={ptt.holding}
+      aria-label={ptt.holding ? "Release to send" : "Hold to talk"}
       className={`relative flex size-18 shrink-0 touch-none select-none items-center justify-center rounded-full text-white shadow-lift transition-all disabled:opacity-40 ${
-        pipecat.holding ? "scale-110 bg-accent animate-pulse-ring" : "bg-night hover:scale-105 hover:bg-night-2"
+        ptt.holding ? "scale-110 bg-accent animate-pulse-ring" : "bg-night hover:scale-105 hover:bg-night-2"
       }`}
     >
-      {pipecat.holding && <MicLevelRing levelRef={pipecat.micLevelRef} />}
-      {pipecat.connecting ? <Loader2 className="relative size-6 animate-spin" aria-hidden /> : <Mic className="relative size-6" aria-hidden />}
+      {ptt.holding && <MicLevelRing levelRef={ptt.micLevelRef} />}
+      {ptt.connecting ? <Loader2 className="relative size-6 animate-spin" aria-hidden /> : <Mic className="relative size-6" aria-hidden />}
     </button>
   );
 
@@ -656,9 +661,9 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
       <PersonaPanel
         session={session}
         avatar={avatar(136, true)}
-        onCall={pipecat.connected}
+        onCall={ptt.connected}
         callStartedAt={callStartedAt}
-        speaking={clientSpeaking}
+        speaking={tts.audible}
         turnsUsed={turnsUsed}
         concluded={concluded}
         hintsLeft={hintsLeft}
@@ -675,7 +680,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
           </Link>
           <span
             className={`relative shrink-0 rounded-full transition-shadow lg:hidden ${
-              clientSpeaking ? "ring-2 ring-accent/60 ring-offset-2 ring-offset-surface" : ""
+              tts.audible ? "ring-2 ring-accent/60 ring-offset-2 ring-offset-surface" : ""
             }`}
           >
             {avatar(40, true)}
@@ -688,7 +693,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
             <p className="flex items-center gap-2 truncate font-display text-[15px] font-bold leading-tight">
               <span className="lg:hidden">{persona}</span>
               <span className="hidden lg:inline">{session.scenario.title}</span>
-              {pipecat.connected && <OnCallPill startedAt={callStartedAt} />}
+              {ptt.connected && <OnCallPill startedAt={callStartedAt} />}
             </p>
             <p className="flex items-center gap-1.5 truncate text-xs text-muted" aria-live="polite">
               <span className={`size-1.5 shrink-0 rounded-full transition-colors ${MOOD_DOT[mood]}`} aria-hidden />
@@ -710,7 +715,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
             </p>
           </div>
           <span className="hidden sm:block">
-            <Badge>{LANGUAGE_LABELS[session.language] ?? session.language}</Badge>
+            <Badge>{languageLabel(session.language)}</Badge>
           </span>
           {voiceAvailable && started && (
             <Button
@@ -754,7 +759,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
             <ChevronDown className={`size-3.5 transition-transform ${briefOpen ? "rotate-180" : ""}`} aria-hidden />
           </button>
           <div className="flex items-center gap-2 text-xs text-muted">
-            <span className="sm:hidden">{LANGUAGE_LABELS[session.language]}</span>
+            <span className="sm:hidden">{languageLabel(session.language)}</span>
             <span className="tabular-nums" aria-live="polite">
               Turn {Math.min(turnsUsed + (outOfTurns ? 0 : 1), session.maxTurns)} of {session.maxTurns}
             </span>
@@ -809,7 +814,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
                 {tts.supported && started && !callMode && (
                   <button
                     type="button"
-                    onClick={() => (tts.speakingId === m.id ? tts.stop() : tts.speak(m.id, m.text))}
+                    onClick={() => (tts.speakingId === m.id ? tts.stop() : tts.speak(m.id, m.text, undefined, toneOf(m)))}
                     className="mb-1 flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-ink/5 hover:text-ink"
                     aria-label={tts.speakingId === m.id ? "Stop audio" : "Play reply aloud"}
                   >
@@ -830,7 +835,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
             );
           })}
 
-          {pipecat.transcribing && (
+          {ptt.transcribing && (
             <li className="ml-auto inline-flex gap-1 rounded-3xl rounded-br-md bg-linear-to-br from-brand to-[#8b45f3] px-4 py-3.5 opacity-70 animate-rise" aria-label="Transcribing">
               {[0, 1, 2].map((i) => (
                 <span key={i} className="size-2 animate-bounce rounded-full bg-white/80" style={{ animationDelay: `${i * 120}ms` }} />
@@ -968,10 +973,10 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
             /* Voice call view */
             <div className="flex flex-col items-center pb-2">
               <div className="mb-3 flex w-full items-center gap-3 lg:hidden">
-                <span className={`rounded-full transition-shadow ${clientSpeaking ? "ring-4 ring-accent/30" : ""}`}>{avatar(64, true)}</span>
+                <span className={`rounded-full transition-shadow ${tts.audible ? "ring-4 ring-accent/30" : ""}`}>{avatar(64, true)}</span>
                 <div className="min-w-0">
                   <p className="font-display text-base font-bold">{persona}</p>
-                  <p className="text-xs text-muted">{pipecat.connected ? (clientSpeaking ? "Speaking…" : "On the call") : pipecat.connecting ? "Connecting…" : "Voice"}</p>
+                  <p className="text-xs text-muted">{ptt.connected ? (clientSpeaking ? "Speaking…" : "On the call") : ptt.connecting ? "Connecting…" : "Voice"}</p>
                 </div>
               </div>
               <div
@@ -980,18 +985,18 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
                 }`}
                 aria-live="polite"
               >
-                {pipecat.connected || pipecat.connecting
+                {ptt.connected || ptt.connecting
                   ? concluded
                     ? "The call has ended"
-                    : pipecat.holding
-                      ? "Listening… release to send"
-                      : pipecat.transcribing
-                        ? "Catching your words…"
+                    : ptt.holding
+                      ? ptt.interim || "Listening… release to send"
+                      : ptt.transcribing
+                        ? ptt.interim || "Catching your words…"
                         : sending
                           ? `${persona} is thinking…`
-                          : pipecat.speaking
+                          : clientSpeaking
                             ? `${persona} is speaking — hold to interrupt`
-                            : pipecat.connecting
+                            : ptt.connecting
                               ? `Calling ${persona}…`
                               : voiceNotice ?? "Hold the mic (or Space) while you talk, let go to send"
                   : liveText || (stt.listening ? "Listening…" : "Your words will appear here")}
@@ -1000,8 +1005,8 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
                 <Button variant="ghost" size="md" onClick={() => setShowKeyboard(true)} aria-label="Show keyboard">
                   <Keyboard className="size-5" aria-hidden />
                 </Button>
-                {pipecat.connected || pipecat.connecting ? talkButton : micButton("lg")}
-                {pipecat.connected || pipecat.connecting ? (
+                {ptt.connected || ptt.connecting ? talkButton : micButton("lg")}
+                {ptt.connected || ptt.connecting ? (
                   <span className="size-11" aria-hidden />
                 ) : autoSendIn !== null ? (
                   <Button variant="ghost" size="md" onClick={cancelAutoSend}>
@@ -1085,7 +1090,6 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
                 {status}
                 {!callMode && stt.supported && !stt.listening && !composerDisabled && !clientSpeaking && " · Tap or hold the mic. Edit before sending."}
                 {stt.supported === false && " · Voice input needs Chrome — typing works everywhere."}
-                {tts.supported && !tts.hasVoiceForLocale && " · No voice for this language on your device."}
               </span>
               <span className="flex shrink-0 items-center gap-3">
                 {draft.length > maxChars * 0.8 && (
@@ -1140,6 +1144,11 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
       )}
     </div>
   );
+}
+
+/** How a saved line should sound: the tone isn't stored, so it follows the client's mood. */
+function toneOf(m: { mood: Mood | null }): string | null {
+  return m.mood ? TONE_BY_MOOD[m.mood] : null;
 }
 
 const MOOD_CHIP: Record<Mood, string> = {

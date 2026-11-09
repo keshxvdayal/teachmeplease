@@ -27,7 +27,7 @@
   "opening_mood": "neutral",
   "patience": 6,
   "call_direction": "outgoing",
-  "voice": { "gender": "female", "rate": 1.05, "pitch": 1.05, "kokoro": "af_heart" },
+  "voice": { "gender": "female", "rate": 1.05, "pitch": 1.05, "gemini_voice": "Leda" },
   "localizations": {
     "hi": {
       "persona_name": "सीमा अरोड़ा",
@@ -74,7 +74,7 @@
     "objection_handling": "How well they handle the repeated 'just tell me the price' push.",
     "closing_outcome": "Did they summarise needs and agree a specific next step (proposal date, call with co-owner)?"
   },
-  "language_modes": ["en", "hi", "hinglish"],
+  "language_modes": ["en", "hi", "hinglish", "mr", "bn", "ta", "te", "es", "fr", "de", "pt", "ja"],
   "default_language": "en",
   "max_turns": 6,
   "min_turns_for_scorecard": 3

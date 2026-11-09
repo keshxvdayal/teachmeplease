@@ -27,7 +27,7 @@
   "opening_mood": "cooperative",
   "patience": 5,
   "call_direction": "incoming",
-  "voice": { "gender": "male", "rate": 1.08, "pitch": 1.0, "kokoro": "bm_fable" },
+  "voice": { "gender": "male", "rate": 1.08, "pitch": 1.0, "gemini_voice": "Puck" },
   "localizations": {
     "hi": {
       "persona_name": "विकास शर्मा",
@@ -74,7 +74,7 @@
     "objection_handling": "How they handle 'it's small' and 'other sites have it'.",
     "closing_outcome": "Is there an agreed option and a written change request or next step?"
   },
-  "language_modes": ["en", "hi", "hinglish"],
+  "language_modes": ["en", "hi", "hinglish", "mr", "bn", "ta", "te", "es", "fr", "de", "pt", "ja"],
   "default_language": "en",
   "max_turns": 6,
   "min_turns_for_scorecard": 3

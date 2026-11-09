@@ -11,10 +11,10 @@ import { ScoreRing } from "@/components/ui/score-ring";
 import { ScoreBars } from "./score-bars";
 import { InsightsPanel } from "./insights-panel";
 import { api, ApiRequestError, trackEvent } from "@/lib/client/api";
+import { getLanguage } from "@/lib/config/languages";
 import type { SessionView } from "@/lib/sessions/service";
 
 const LANGUAGE_LABELS: Record<string, string> = { en: "English", hi: "Hindi", hinglish: "Hinglish" };
-const TTS: Record<string, string> = { hi: "hi-IN", hinglish: "en-IN" };
 
 const goalCopy = {
   yes: { label: "Goal reached", icon: CheckCircle2, tone: "success" as const },
@@ -229,7 +229,7 @@ export function ResultsView({ initial, isAnonymous }: { initial: SessionView; is
           <p className="text-[11px] font-semibold uppercase tracking-widest text-brand-ink">A stronger version</p>
           <div className="mt-1.5 flex items-start gap-2">
             <p className="flex-1 font-serif text-xl leading-snug text-ink sm:text-2xl">“{sc.better_phrase}”</p>
-            <SpeakButton text={sc.better_phrase} lang={TTS[session.language] ?? session.speechLocale ?? "en-US"} />
+            <SpeakButton text={sc.better_phrase} lang={session.language === "en" ? (session.speechLocale ?? "en-US") : (getLanguage(session.language)?.ttsLocale ?? "en-US")} />
           </div>
         </div>
       </section>

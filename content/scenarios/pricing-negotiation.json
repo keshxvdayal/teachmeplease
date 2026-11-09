@@ -40,7 +40,7 @@
     "gender": "male",
     "rate": 1.0,
     "pitch": 0.95,
-    "kokoro": "am_fenrir"
+    "gemini_voice": "Orus"
   },
   "localizations": {
     "hi": {
@@ -89,11 +89,7 @@
     "objection_handling": "Did they ask about budget or priorities, link price to value, and trade rather than give concessions?",
     "closing_outcome": "Did the conversation end with a specific next step and a commercially sensible agreement?"
   },
-  "language_modes": [
-    "en",
-    "hi",
-    "hinglish"
-  ],
+  "language_modes": ["en", "hi", "hinglish", "mr", "bn", "ta", "te", "es", "fr", "de", "pt", "ja"],
   "default_language": "en",
   "max_turns": 7,
   "min_turns_for_scorecard": 3

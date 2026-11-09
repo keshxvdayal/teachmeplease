@@ -10,7 +10,8 @@ export type ActorType = "anonymous" | "user";
 interface CallContext {
   kind: UsageKind;
   actorType: ActorType;
-  sessionId: string;
+  /** Null for calls made before a session exists (e.g. translating an opening line). */
+  sessionId: string | null;
 }
 
 /**

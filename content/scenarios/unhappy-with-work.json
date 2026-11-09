@@ -28,7 +28,7 @@
   "opening_mood": "frustrated",
   "patience": 4,
   "call_direction": "incoming",
-  "voice": { "gender": "female", "rate": 0.98, "pitch": 1.08, "kokoro": "bf_emma" },
+  "voice": { "gender": "female", "rate": 0.98, "pitch": 1.08, "gemini_voice": "Kore" },
   "localizations": {
     "hi": {
       "persona_name": "कविता जोशी",
@@ -75,7 +75,7 @@
     "objection_handling": "How they handle vague negativity and the push for free new concepts.",
     "closing_outcome": "Is there an agreed direction, timeline and how it fits the revision rounds?"
   },
-  "language_modes": ["en", "hi", "hinglish"],
+  "language_modes": ["en", "hi", "hinglish", "mr", "bn", "ta", "te", "es", "fr", "de", "pt", "ja"],
   "default_language": "en",
   "max_turns": 7,
   "min_turns_for_scorecard": 3

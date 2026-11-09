@@ -9,12 +9,16 @@ export const PATIENCE_CHANGES = ["lose_2", "lose_1", "same", "gain_1"] as const;
 export type PatienceChange = (typeof PATIENCE_CHANGES)[number];
 export const PATIENCE_DELTA: Record<PatienceChange, number> = { lose_2: -2, lose_1: -1, same: 0, gain_1: 1 };
 
-export const ROLEPLAY_PROMPT_VERSION = "roleplay-v5";
+export const ROLEPLAY_PROMPT_VERSION = "roleplay-v6";
 
 export const roleplayOutputSchema: JsonSchema = {
   type: "object",
   properties: {
     reply: { type: "string", description: "What the client says out loud next. Spoken words only." },
+    tone: {
+      type: "string",
+      description: "How the reply should sound when spoken, in 1–3 English words, e.g. cheerful, gently apologetic, curt and impatient.",
+    },
     mood: {
       type: "string",
       enum: [...MOODS],
@@ -35,7 +39,7 @@ export const roleplayOutputSchema: JsonSchema = {
       description: "True only if the client is ending the conversation in this reply.",
     },
   },
-  required: ["reply", "mood", "patience", "notes", "end_conversation"],
+  required: ["reply", "tone", "mood", "patience", "notes", "end_conversation"],
 };
 
 export interface ClientState {
@@ -128,7 +132,7 @@ When you end, make the outcome clear in your words (what was agreed, or that the
   - Now and then a filler or a thinking pause written as "...": "Hmm... that's more than I expected", "Well, uh, we were thinking more like three thousand".
   - Occasionally restart or correct yourself mid-sentence with a dash: "We need it by — actually, the launch moved, so the end of the month."
   - Use these sparingly: at most one or two per reply, and not in every reply. When you're annoyed or out of patience, drop them and be short and blunt.
-- No lists, markdown, stage directions, emoji or name labels. Write numbers the way you'd say them in this language.
+- No lists, markdown, stage directions, emoji or name labels. Put how you sound in "tone", never in the reply. Write numbers the way you'd say them in this language.
 - Sound like a client, not an assistant. Never offer to "help".
 
 ## Staying in role (important)
@@ -145,5 +149,5 @@ ${state.notes ? `Your private notes so far: ${state.notes}` : "Your private note
 ## Where we are
 Turn ${turn.userTurn} of ${turn.maxTurns}. ${stageGuidance(turn)}
 
-Respond with JSON: {"reply": "<your spoken words>", "mood": "<${MOODS.join("|")}>", "patience": "<${PATIENCE_CHANGES.join("|")}>", "notes": "<private memory>", "end_conversation": <true|false>}.`;
+Respond with JSON: {"reply": "<your spoken words>", "tone": "<how it sounds, 1-3 words>", "mood": "<${MOODS.join("|")}>", "patience": "<${PATIENCE_CHANGES.join("|")}>", "notes": "<private memory>", "end_conversation": <true|false>}.`;
 }
