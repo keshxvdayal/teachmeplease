@@ -28,19 +28,34 @@ function recognitionCtor(): RecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+const canRecord = () => typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined";
+
+/** Why a turn produced no words, so the learner gets advice that fits. */
+export type EmptyTurnReason = "short" | "silent" | "unclear" | "failed";
+
 // After letting go, wait at most this long for the browser's last words before sending what we have.
 const FINISH_TIMEOUT_MS = 700;
 // …or this long when nothing has been heard yet (the first words may still be on their way).
 const FINISH_TIMEOUT_EMPTY_MS = 1500;
 // The browser stops recognition by itself after silences; restart it at most this often per hold.
 const MAX_RESTARTS = 40;
+// Keep recording briefly after letting go: people often release on their last syllable.
+const RECORD_TAIL_MS = 250;
+// Presses shorter than this are taps, not speech.
+const MIN_SPEECH_MS = 400;
+// Mic loudness (0–1, as shown on the ring) below which the whole hold counts as silence.
+const SILENT_PEAK = 0.02;
+// Server transcription gets at most a minute of audio.
+const MAX_UPLOAD_SECONDS = 60;
+const STT_SAMPLE_RATE = 16_000;
 
 /**
- * Hold-to-talk with the browser's built-in speech recognition (Chrome, Edge, Safari; no API key).
- * Listening lasts from `press()` until `release()`, restarting quietly when the browser stops on
- * its own. The whole turn's transcript is then passed to `onUserTurn`.
+ * Hold-to-talk. While the button is held, the browser's speech recognition listens (fast, free)
+ * and the mic is also recorded. If the browser hears nothing — Safari, Brave, Firefox, a flaky
+ * connection, or a mic the recognizer can't use — the recording is transcribed on the server.
+ * The whole turn's transcript is then passed to `onUserTurn` ("" with a reason if nothing was said).
  */
-export function usePushToTalk(locale: string, onUserTurn: (text: string, speechMs: number) => void) {
+export function usePushToTalk(locale: string, onUserTurn: (text: string, speechMs: number, reason?: EmptyTurnReason) => void) {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -61,15 +76,24 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
   const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onUserTurnRef = useRef(onUserTurn);
   onUserTurnRef.current = onUserTurn;
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
+
+  // The recording of the current hold, used when the browser's recognizer comes back empty.
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingRef = useRef<Promise<Blob | null> | null>(null);
+  const sttAbortRef = useRef<AbortController | null>(null);
 
   // The learner's mic loudness for the ring around the talk button. A separate mic stream is
   // opened for this; Android can't share the mic with recognition, so it goes without.
   const micLevelRef = useRef(0);
+  const peakRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const meterRef = useRef<{ ctx: AudioContext; frame: number } | null>(null);
 
   useEffect(() => {
-    setAvailable(recognitionCtor() !== null && typeof navigator !== "undefined" && !!navigator.mediaDevices);
+    const hasMic = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+    setAvailable(hasMic && (recognitionCtor() !== null || canRecord()));
   }, []);
 
   const stopMeter = () => {
@@ -94,13 +118,57 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
         analyser.getFloatTimeDomainData(samples);
         let sum = 0;
         for (const v of samples) sum += v * v;
-        micLevelRef.current = holdingRef.current ? Math.min(1, Math.sqrt(sum / samples.length) * 9) : 0;
+        const level = holdingRef.current ? Math.min(1, Math.sqrt(sum / samples.length) * 9) : 0;
+        micLevelRef.current = level;
+        if (level > peakRef.current) peakRef.current = level;
         if (meterRef.current) meterRef.current.frame = requestAnimationFrame(tick);
       };
       meterRef.current = { ctx, frame: requestAnimationFrame(tick) };
     } catch {
       // The ring just stays still.
     }
+  };
+
+  /** Whether the loudness meter is actually measuring (a suspended AudioContext reads silence). */
+  const meterWorks = () => meterRef.current?.ctx.state === "running";
+
+  const startRecording = () => {
+    recordingRef.current = null;
+    recorderRef.current = null;
+    const stream = streamRef.current;
+    if (!stream || !canRecord()) return;
+    try {
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((t) => MediaRecorder.isTypeSupported?.(t));
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+      recordingRef.current = new Promise((resolve) => {
+        rec.onstop = () => resolve(chunks.length ? new Blob(chunks, { type: rec.mimeType || mime || "audio/webm" }) : null);
+        rec.onerror = () => resolve(null);
+      });
+      rec.start(250);
+      recorderRef.current = rec;
+    } catch {
+      recordingRef.current = null;
+      recorderRef.current = null;
+    }
+  };
+
+  const stopRecording = (afterMs = 0) => {
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    if (!rec || rec.state === "inactive") return;
+    const stop = () => {
+      try {
+        rec.stop();
+      } catch {
+        /* already stopped */
+      }
+    };
+    if (afterMs > 0) setTimeout(stop, afterMs);
+    else stop();
   };
 
   const clearFinishTimer = () => {
@@ -113,12 +181,64 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
     if (turn !== turnRef.current || holdingRef.current) return;
     clearFinishTimer();
     turnRef.current++; // later events from this turn are ignored
+    if (recRef.current) {
+      recRef.current.onend = null;
+      recRef.current.abort();
+      recRef.current = null;
+    }
     const text = [finalRef.current, interimRef.current].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
     finalRef.current = "";
     interimRef.current = "";
     setInterim("");
-    setTranscribing(false);
-    if (connectedRef.current) onUserTurnRef.current(text, speechMsRef.current);
+    const speechMs = speechMsRef.current;
+    const recording = recordingRef.current;
+    recordingRef.current = null;
+    const deliver = (words: string, reason?: EmptyTurnReason) => {
+      setTranscribing(false);
+      if (connectedRef.current) onUserTurnRef.current(words, speechMs, words ? undefined : reason);
+    };
+
+    if (text) {
+      stopRecording();
+      return deliver(text);
+    }
+    if (speechMs < MIN_SPEECH_MS) {
+      stopRecording();
+      return deliver("", "short");
+    }
+    if (meterWorks() && peakRef.current < SILENT_PEAK) {
+      stopRecording();
+      return deliver("", "silent");
+    }
+    if (!recording) return deliver("", "unclear");
+
+    // The browser heard nothing: transcribe the recording on the server instead.
+    setTranscribing(true);
+    const ac = new AbortController();
+    sttAbortRef.current = ac;
+    void (async () => {
+      try {
+        const blob = await Promise.race([recording, new Promise<null>((r) => setTimeout(() => r(null), 3000))]);
+        if (ac.signal.aborted) return;
+        if (!blob || blob.size < 500) return deliver("", "unclear");
+        const body = await toWav(blob).catch(() => blob);
+        const res = await fetch(`/api/stt?lang=${encodeURIComponent(localeRef.current)}`, {
+          method: "POST",
+          headers: { "Content-Type": body.type.split(";")[0] || "audio/webm" },
+          body,
+          signal: ac.signal,
+        });
+        if (ac.signal.aborted) return;
+        if (!res.ok) return deliver("", "failed");
+        const { text: heard } = (await res.json()) as { text?: string };
+        if (ac.signal.aborted) return;
+        deliver((heard ?? "").trim(), "unclear");
+      } catch {
+        if (!ac.signal.aborted) deliver("", "failed");
+      } finally {
+        if (sttAbortRef.current === ac) sttAbortRef.current = null;
+      }
+    })();
   }, []);
 
   const fail = useCallback((kind: VoiceErrorKind) => {
@@ -127,15 +247,21 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
     setTranscribing(false);
     setInterim("");
     turnRef.current++;
+    stopRecording();
+    recordingRef.current = null;
     setError(voiceErrorMessages[kind]);
   }, []);
 
   const listen = useCallback(
     (turn: number) => {
       const Ctor = recognitionCtor();
-      if (!Ctor) return fail("unsupported");
+      // No browser recognizer (e.g. Firefox): the recording alone is transcribed on the server.
+      if (!Ctor) return recorderRef.current ? undefined : fail("unsupported");
       const isAndroid = /android/i.test(navigator.userAgent);
       let restarts = 0;
+      // Set when the browser's recognizer can't work here (Brave, offline, unsupported language);
+      // the recording takes over, so it isn't restarted.
+      let broken = false;
 
       const launch = () => {
         const rec = new Ctor();
@@ -157,16 +283,20 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
         };
         rec.onerror = (e) => {
           if (turn !== turnRef.current) return;
+          if (e.error === "no-speech" || e.error === "aborted") return; // onend decides what's next
+          if (recorderRef.current || recordingRef.current) {
+            broken = true;
+            return;
+          }
           if (e.error === "not-allowed" || e.error === "service-not-allowed") fail("permission");
           else if (e.error === "audio-capture") fail("no-mic");
           else if (e.error === "network") fail("network");
           else if (e.error === "language-not-supported") fail("language");
-          // "no-speech" and "aborted" just end this session; onend decides what's next.
         };
         rec.onend = () => {
           if (recRef.current === rec) recRef.current = null;
           if (turn !== turnRef.current) return;
-          if (holdingRef.current && restarts++ < MAX_RESTARTS) {
+          if (holdingRef.current && !broken && restarts++ < MAX_RESTARTS) {
             // Still holding: the browser stopped on its own, so quietly keep listening. Words heard
             // but not yet final are kept, since a new session starts from scratch.
             if (interimRef.current) {
@@ -189,7 +319,7 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
       try {
         launch();
       } catch {
-        fail("failed");
+        if (!recorderRef.current) fail("failed");
       }
     },
     [locale, fail, finish],
@@ -204,6 +334,10 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
       clearFinishTimer();
       recRef.current?.abort();
       recRef.current = null;
+      sttAbortRef.current?.abort();
+      sttAbortRef.current = null;
+      stopRecording();
+      recordingRef.current = null;
       setHolding(false);
       setTranscribing(false);
       setInterim("");
@@ -214,15 +348,17 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
   /** Starts the call: asks for the microphone once, so holding the button later starts instantly. */
   const connect = useCallback(async () => {
     if (connectedRef.current) return;
-    if (!recognitionCtor()) {
+    const Ctor = recognitionCtor();
+    if (!Ctor && !canRecord()) {
       setError(voiceErrorMessages.unsupported);
       throw new Error("unsupported");
     }
     setError(null);
     setConnecting(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-      if (/android/i.test(navigator.userAgent)) stream.getTracks().forEach((t) => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      // Android can't share the mic between this stream and the browser's recognizer.
+      if (/android/i.test(navigator.userAgent) && Ctor) stream.getTracks().forEach((t) => t.stop());
       else {
         streamRef.current = stream;
         startMeter(stream);
@@ -238,7 +374,8 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
   }, []);
 
   const press = useCallback(() => {
-    if (!connectedRef.current || holdingRef.current) return;
+    // Still transcribing the last turn on the server: let it finish first.
+    if (!connectedRef.current || holdingRef.current || sttAbortRef.current) return;
     clearFinishTimer();
     // A turn still being finished is sent now, before the new one starts.
     if (recRef.current) {
@@ -246,14 +383,19 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
       recRef.current.abort();
       recRef.current = null;
       finish(turnRef.current);
+      if (sttAbortRef.current) return;
     }
+    // This press is a user gesture: wake the loudness meter if the browser suspended it.
+    if (meterRef.current?.ctx.state === "suspended") void meterRef.current.ctx.resume().catch(() => undefined);
     setError(null);
     holdingRef.current = true;
     pressedAtRef.current = performance.now();
+    peakRef.current = 0;
     finalRef.current = "";
     interimRef.current = "";
     setInterim("");
     setHolding(true);
+    startRecording();
     listen(turnRef.current);
   }, [listen, finish]);
 
@@ -263,15 +405,11 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
     speechMsRef.current = Math.round(performance.now() - pressedAtRef.current);
     setHolding(false);
     setTranscribing(true);
+    stopRecording(RECORD_TAIL_MS);
     const turn = turnRef.current;
     const rec = recRef.current;
     // Everything heard is already final: send straight away rather than wait for the browser.
     if (finalRef.current && !interimRef.current) {
-      if (rec) {
-        rec.onend = null;
-        rec.abort();
-        recRef.current = null;
-      }
       finish(turn);
       return;
     }
@@ -280,11 +418,13 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
         rec.stop(); // its onend delivers the turn
       } catch {
         finish(turn);
+        return;
       }
     } else {
       finish(turn);
+      return;
     }
-    // If the browser never reports the end, send what was heard.
+    // If the browser never reports the end, send what was heard (or fall back to the recording).
     finishTimerRef.current = setTimeout(() => finish(turn), finalRef.current || interimRef.current ? FINISH_TIMEOUT_MS : FINISH_TIMEOUT_EMPTY_MS);
   }, [finish]);
 
@@ -307,4 +447,38 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
     press,
     release,
   };
+}
+
+/** Decodes a recording and re-encodes it as 16 kHz mono WAV, which every speech model accepts. */
+async function toWav(blob: Blob): Promise<Blob> {
+  const w = window as unknown as { OfflineAudioContext?: typeof OfflineAudioContext; webkitOfflineAudioContext?: typeof OfflineAudioContext };
+  const Ctx = w.OfflineAudioContext ?? w.webkitOfflineAudioContext;
+  if (!Ctx) throw new Error("no audio decoding");
+  // Decoding resamples to the context's rate.
+  const ctx = new Ctx(1, 1, STT_SAMPLE_RATE);
+  const audio = await ctx.decodeAudioData(await blob.arrayBuffer());
+  const length = Math.min(audio.length, MAX_UPLOAD_SECONDS * audio.sampleRate);
+  const channels = Array.from({ length: audio.numberOfChannels }, (_, i) => audio.getChannelData(i));
+  const pcm = new DataView(new ArrayBuffer(44 + length * 2));
+  const str = (o: number, s: string) => [...s].forEach((c, i) => pcm.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF");
+  pcm.setUint32(4, 36 + length * 2, true);
+  str(8, "WAVE");
+  str(12, "fmt ");
+  pcm.setUint32(16, 16, true);
+  pcm.setUint16(20, 1, true);
+  pcm.setUint16(22, 1, true);
+  pcm.setUint32(24, audio.sampleRate, true);
+  pcm.setUint32(28, audio.sampleRate * 2, true);
+  pcm.setUint16(32, 2, true);
+  pcm.setUint16(34, 16, true);
+  str(36, "data");
+  pcm.setUint32(40, length * 2, true);
+  for (let i = 0; i < length; i++) {
+    let s = 0;
+    for (const ch of channels) s += ch[i];
+    s = Math.max(-1, Math.min(1, s / channels.length));
+    pcm.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([pcm.buffer], { type: "audio/wav" });
 }

@@ -27,7 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { api, ApiRequestError, trackEvent, type ApiError } from "@/lib/client/api";
 import { useSpeechRecognition, voiceErrorMessages, type VoiceErrorKind } from "@/lib/client/use-speech-recognition";
 import { useVoiceOutput } from "@/lib/client/use-voice-output";
-import { usePushToTalk } from "@/lib/client/use-push-to-talk";
+import { usePushToTalk, type EmptyTurnReason } from "@/lib/client/use-push-to-talk";
 import { languageLabel } from "@/lib/config/languages";
 import { TONE_BY_MOOD, voiceFor } from "@/lib/config/voices";
 import { uuid } from "@/lib/client/uuid";
@@ -43,6 +43,13 @@ const HOLD_THRESHOLD_MS = 350;
 const SILENCE_MS = 1500;
 const NO_SPEECH_MS = 9000;
 const AUTO_SEND_SECONDS = 2;
+
+const EMPTY_TURN_NOTICES: Record<EmptyTurnReason, string> = {
+  short: "That was too quick. Keep holding the button the whole time you speak, then let go.",
+  silent: "Your microphone isn't picking up any sound. Check it isn't muted and the right input is selected in your system settings.",
+  unclear: "Didn't catch that. Try again a little louder or closer to the mic.",
+  failed: "Couldn't transcribe that just now. Try again, or tap the keyboard to type.",
+};
 
 const MOOD_EMOJI: Record<Mood, string> = {
   frustrated: "😤",
@@ -133,9 +140,9 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
   });
   // Hold-to-talk with the browser's speech recognition. Each turn goes through the same API as
   // typed replies, so mood, patience, the end of the call and feedback work the same way.
-  const ptt = usePushToTalk(speechLocale, (text, speechMs) => {
+  const ptt = usePushToTalk(speechLocale, (text, speechMs, reason) => {
     if (!text) {
-      setVoiceNotice("Didn't catch that. Hold the button while you speak, then let go.");
+      setVoiceNotice(EMPTY_TURN_NOTICES[reason ?? "unclear"]);
       return;
     }
     setVoiceNotice(null);
