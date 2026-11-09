@@ -19,8 +19,8 @@ export function AuthShell({ title, accent, subtitle, children }: { title: string
           aria-hidden
         >
           <div className="bg-dots-light absolute inset-0" />
-          <div className="absolute -right-16 -top-16 size-72 rounded-full bg-accent/50 blur-3xl" />
-          <div className="absolute -bottom-20 -left-10 size-72 rounded-full bg-lime/40 blur-3xl" />
+          <div className="absolute -right-16 -top-16 size-72 rounded-full bg-accent/50 glow" />
+          <div className="absolute -bottom-20 -left-10 size-72 rounded-full bg-lime/40 glow" />
           <div className="relative flex h-full flex-col justify-between gap-10">
             <p className="font-serif text-4xl italic leading-tight">
               “The best time to practice a hard conversation is before you have it.”

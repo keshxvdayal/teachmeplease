@@ -173,8 +173,8 @@ export function ResultsView({ initial, isAnonymous }: { initial: SessionView; is
 
       <section className="grain relative overflow-hidden rounded-[32px] bg-night p-6 text-white shadow-lift sm:p-8" aria-labelledby="overall">
         <div className="bg-dots-light absolute inset-0" aria-hidden />
-        <div className="absolute -right-24 -top-24 size-80 rounded-full bg-brand/50 blur-[90px]" aria-hidden />
-        <div className="absolute -bottom-32 left-10 size-72 rounded-full bg-accent/30 blur-[90px]" aria-hidden />
+        <div className="absolute -right-24 -top-24 size-80 rounded-full bg-brand/50 glow" aria-hidden />
+        <div className="absolute -bottom-32 left-10 size-72 rounded-full bg-accent/30 glow" aria-hidden />
         <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center">
           <div className="self-start rounded-full bg-white p-2 shadow-2xl sm:self-auto" role="img" aria-label={`Overall score ${sc.overall_score} out of 10`}>
             <ScoreRing score={sc.overall_score} size={136} stroke={12} />

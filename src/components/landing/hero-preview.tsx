@@ -71,7 +71,7 @@ export function HeroPreview() {
       </div>
 
       {/* Feedback card */}
-      <div className="relative z-20 -mt-8 ml-auto w-[86%] rounded-3xl border border-line bg-surface/95 p-4 shadow-lift backdrop-blur sm:-mr-8 sm:p-5">
+      <div className="relative z-20 -mt-8 ml-auto w-[86%] rounded-3xl border border-line bg-surface/95 p-4 shadow-lift sm:-mr-8 sm:p-5">
         <div className="flex items-center gap-4">
           <ScoreRing score={7.2} size={78} stroke={8} />
           <div className="min-w-0 flex-1">

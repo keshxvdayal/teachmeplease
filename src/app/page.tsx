@@ -65,13 +65,13 @@ export default function HomePage() {
         {/* Ambient background for header + hero */}
         <div className="pointer-events-none absolute inset-x-0 top-0 h-[900px] overflow-hidden" aria-hidden>
           <div className="bg-dots mask-fade-y absolute inset-0" />
-          <div className="absolute -left-32 top-10 size-[420px] animate-blob rounded-full bg-brand/25 blur-[90px]" />
+          <div className="absolute -left-32 top-10 size-[420px] animate-blob rounded-full bg-brand/25 glow" />
           <div
-            className="absolute right-[-120px] top-40 size-[380px] animate-blob rounded-full bg-accent/25 blur-[90px]"
+            className="absolute right-[-120px] top-40 size-[380px] animate-blob rounded-full bg-accent/25 glow"
             style={{ animationDelay: "-6s" }}
           />
           <div
-            className="absolute left-1/3 top-[520px] size-[300px] animate-blob rounded-full bg-lime/40 blur-[90px]"
+            className="absolute left-1/3 top-[520px] size-[300px] animate-blob rounded-full bg-lime/40 glow"
             style={{ animationDelay: "-12s" }}
           />
         </div>
@@ -81,7 +81,7 @@ export default function HomePage() {
           {/* Hero */}
           <section className="mx-auto grid max-w-6xl items-center gap-14 px-4 pb-20 pt-14 sm:px-6 md:pt-20 lg:grid-cols-[1.15fr_1fr] lg:gap-10 lg:pb-28">
             <div className="animate-rise">
-              <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/80 py-1 pl-1.5 pr-3 text-xs font-medium text-ink-2 shadow-card backdrop-blur">
+              <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/80 py-1 pl-1.5 pr-3 text-xs font-medium text-ink-2 shadow-card">
                 <span className="rounded-full bg-night px-2 py-0.5 text-[11px] font-semibold text-lime">New</span>
                 Client communication track · Now available
               </span>
@@ -130,7 +130,7 @@ export default function HomePage() {
           {/* Dreaded-lines marquee */}
           <section aria-label="Things clients say" className="relative -rotate-1 border-y border-night bg-night py-4">
             <div className="mask-fade-x flex overflow-hidden">
-              <ul className="flex shrink-0 animate-marquee items-center gap-4 pr-4">
+              <ul className="flex shrink-0 animate-marquee will-change-transform items-center gap-4 pr-4">
                 {[...dreadedLines, ...dreadedLines].map((line, i) => (
                   <li
                     key={i}
@@ -214,8 +214,8 @@ export default function HomePage() {
           {/* Scorecard preview */}
           <section className="relative overflow-hidden bg-night text-white">
             <div className="bg-dots-light absolute inset-0" aria-hidden />
-            <div className="absolute -right-40 top-0 size-[500px] rounded-full bg-brand/40 blur-[120px]" aria-hidden />
-            <div className="absolute -bottom-40 left-0 size-[400px] rounded-full bg-accent/20 blur-[120px]" aria-hidden />
+            <div className="absolute -right-40 top-0 size-[500px] rounded-full bg-brand/40 glow" aria-hidden />
+            <div className="absolute -bottom-40 left-0 size-[400px] rounded-full bg-accent/20 glow" aria-hidden />
             <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:py-28">
               <div>
                 <Eyebrow light>Your scorecard</Eyebrow>
@@ -386,8 +386,8 @@ export default function HomePage() {
           <section className="px-4 py-20 sm:px-6 lg:py-24">
             <div className="grain relative mx-auto max-w-6xl overflow-hidden rounded-[40px] bg-linear-to-br from-brand via-[#7c3df2] to-[#c03df0] px-6 py-16 text-center text-white sm:py-24">
               <div className="bg-dots-light absolute inset-0" aria-hidden />
-              <div className="absolute -left-20 -top-20 size-72 rounded-full bg-accent/50 blur-3xl" aria-hidden />
-              <div className="absolute -bottom-24 -right-10 size-72 rounded-full bg-lime/40 blur-3xl" aria-hidden />
+              <div className="absolute -left-20 -top-20 size-72 rounded-full bg-accent/50 glow" aria-hidden />
+              <div className="absolute -bottom-24 -right-10 size-72 rounded-full bg-lime/40 glow" aria-hidden />
               <div className="relative">
                 <h2 className="mx-auto max-w-3xl text-4xl font-extrabold text-balance sm:text-6xl">
                   Your next difficult conversation is <span className="font-serif font-normal italic text-lime">coming.</span>

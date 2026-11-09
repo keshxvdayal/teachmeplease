@@ -16,7 +16,7 @@ export function ScenarioCard({ scenario, cta = "Start practice" }: { scenario: P
       <div className={`grain relative h-44 overflow-hidden ${theme.panel}`} aria-hidden>
         <div className="bg-dots-light absolute inset-0 opacity-60" />
         <Icon className="absolute -bottom-6 -right-6 size-36 rotate-[-12deg] text-white/15 transition-transform duration-500 group-hover:rotate-0 group-hover:scale-110" strokeWidth={1.25} />
-        <span className={`absolute left-5 top-5 flex size-11 items-center justify-center rounded-2xl ring-1 backdrop-blur ${theme.iconChip}`}>
+        <span className={`absolute left-5 top-5 flex size-11 items-center justify-center rounded-2xl ring-1 ${theme.iconChip}`}>
           <Icon className="size-5" />
         </span>
         <p

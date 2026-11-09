@@ -13,6 +13,7 @@ export function SiteFooter() {
         </div>
         <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <Link href="/about" className="hover:text-white">About</Link>
+          <Link href="/pricing" className="hover:text-white">Pricing</Link>
           <Link href="/privacy" className="hover:text-white">Privacy Policy</Link>
           <Link href="/terms" className="hover:text-white">Terms of Service</Link>
           <a href={`mailto:${site.contactEmail}`} className="hover:text-white">Contact</a>

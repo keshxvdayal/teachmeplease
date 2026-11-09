@@ -669,8 +669,8 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
   return (
     <div className="relative flex h-dvh overflow-hidden bg-canvas">
       <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
-      <div className="pointer-events-none absolute -left-40 top-1/3 size-96 rounded-full bg-brand/10 blur-[100px]" aria-hidden />
-      <div className="pointer-events-none absolute -right-40 bottom-24 size-96 rounded-full bg-accent/10 blur-[100px]" aria-hidden />
+      <div className="pointer-events-none absolute -left-40 top-1/3 size-96 rounded-full bg-brand/10 glow" aria-hidden />
+      <div className="pointer-events-none absolute -right-40 bottom-24 size-96 rounded-full bg-accent/10 glow" aria-hidden />
       <PersonaPanel
         session={session}
         avatar={avatar(136, true)}
@@ -686,7 +686,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
       />
       <div className="relative flex min-w-0 flex-1 flex-col">
       {/* Top bar */}
-      <header className="relative z-10 border-b border-line bg-surface/85 backdrop-blur-xl">
+      <header className="relative z-10 border-b border-line bg-surface/95 ">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-3 py-2.5 sm:px-5">
           <Link href="/practice" className="hidden rounded-full p-1.5 text-muted transition-colors hover:bg-ink/5 hover:text-ink sm:block lg:hidden" aria-label="Back to scenarios">
             <X className="size-5" aria-hidden />
@@ -927,7 +927,7 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
       </main>
 
       {/* Composer */}
-      <footer className="relative z-10 border-t border-line bg-surface/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl">
+      <footer className="relative z-10 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] ">
         <div className="mx-auto max-w-3xl px-3 pt-3 sm:px-5">
           {error && (
             <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
@@ -1231,7 +1231,7 @@ function CallScreen(props: {
       {/* .grain sets position: relative, so the texture lives on its own layer */}
       <div className="grain pointer-events-none absolute! inset-0" aria-hidden />
       <div className="bg-dots-light pointer-events-none absolute inset-0" aria-hidden />
-      <div className="pointer-events-none absolute -top-32 left-1/2 size-[28rem] -translate-x-1/2 rounded-full bg-brand/40 blur-[110px]" aria-hidden />
+      <div className="pointer-events-none absolute -top-32 left-1/2 size-[28rem] -translate-x-1/2 rounded-full bg-brand/40 glow" aria-hidden />
       <div className="relative text-center">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white/60" aria-live="polite">
           {status}
@@ -1320,7 +1320,7 @@ function PersonaPanel(props: {
   const lowPatience = session.patience <= Math.max(1, Math.floor(session.maxPatience / 3));
 
   return (
-    <aside className="relative z-10 hidden w-80 shrink-0 flex-col gap-5 overflow-y-auto border-r border-line bg-surface/85 p-6 backdrop-blur-xl lg:flex xl:w-96">
+    <aside className="relative z-10 hidden w-80 shrink-0 flex-col gap-5 overflow-y-auto border-r border-line bg-surface/95 p-6  lg:flex xl:w-96">
       <Link href="/practice" className="-ml-1.5 -mt-1.5 self-start rounded-full p-1.5 text-muted transition-colors hover:bg-ink/5 hover:text-ink" aria-label="Back to scenarios">
         <X className="size-5" aria-hidden />
       </Link>
@@ -1452,7 +1452,7 @@ function EndDialog(props: {
         if (!props.scoring) props.onClose();
       }}
       aria-labelledby="end-title"
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-[28px] border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-night/50 backdrop:backdrop-blur-sm"
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-[28px] border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-night/50"
     >
       <div className="p-6 sm:p-7">
         <h2 id="end-title" className="text-2xl font-extrabold">

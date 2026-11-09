@@ -18,8 +18,8 @@ export default function PracticePage() {
       <main id="main" className="relative">
         <div className="pointer-events-none absolute inset-x-0 -top-20 h-[420px] overflow-hidden" aria-hidden>
           <div className="bg-dots mask-fade-y absolute inset-0" />
-          <div className="absolute -left-20 top-0 size-80 rounded-full bg-brand/20 blur-[90px]" />
-          <div className="absolute right-0 top-10 size-72 rounded-full bg-accent/20 blur-[90px]" />
+          <div className="absolute -left-20 top-0 size-80 rounded-full bg-brand/20 glow" />
+          <div className="absolute right-0 top-10 size-72 rounded-full bg-accent/20 glow" />
         </div>
         <div className="relative mx-auto max-w-6xl px-4 pb-20 pt-12 sm:px-6 sm:pt-16">
           <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-brand">

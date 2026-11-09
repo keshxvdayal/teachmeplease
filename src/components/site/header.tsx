@@ -4,7 +4,7 @@ import { getActor } from "@/lib/auth/identity";
 import { ButtonLink } from "@/components/ui/button";
 import { Logo } from "./logo";
 
-const navLink = "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium text-ink-2 transition-colors hover:bg-ink/5 hover:text-ink";
+const navLink = "whitespace-nowrap rounded-full px-2.5 py-2 text-sm font-medium text-ink-2 sm:px-3 transition-colors hover:bg-ink/5 hover:text-ink";
 
 export async function SiteHeader({ minimal = false }: { minimal?: boolean }) {
   const actor = await getActor();
@@ -12,12 +12,15 @@ export async function SiteHeader({ minimal = false }: { minimal?: boolean }) {
 
   return (
     <header className="sticky top-0 z-30 px-3 pt-3 sm:px-4">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 rounded-full border border-line/80 bg-surface/75 pl-4 pr-2 shadow-card backdrop-blur-xl supports-backdrop-filter:bg-surface/65 sm:pl-5">
+      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 rounded-full border border-line/80 bg-surface/95 pl-4 pr-2 shadow-card sm:pl-5">
         <Logo />
         {!minimal && (
           <nav aria-label="Main" className="flex items-center gap-0.5 sm:gap-1">
             <Link href="/practice" className={`hidden sm:block ${navLink}`}>
               Scenarios
+            </Link>
+            <Link href="/pricing" className={navLink}>
+              Pricing
             </Link>
             <Link href="/history" className={navLink}>
               History

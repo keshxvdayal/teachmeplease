@@ -84,7 +84,17 @@
   .mask-fade-x {
     mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
   }
-  /* Film grain overlay */
+  /* Soft colour glow. A radial mask instead of `filter: blur()`, which the browser re-renders on
+     every scroll/animation frame and makes pages lag; the mask is painted once. */
+  .glow {
+    -webkit-mask-image: radial-gradient(closest-side, #000 0%, rgb(0 0 0 / 0.6) 40%, transparent 100%);
+    mask-image: radial-gradient(closest-side, #000 0%, rgb(0 0 0 / 0.6) 40%, transparent 100%);
+    scale: 1.4;
+    pointer-events: none;
+    will-change: transform;
+    contain: strict;
+  }
+  /* Film grain overlay (no blend mode: blending forces extra compositing on every scroll) */
   .grain {
     position: relative;
     isolation: isolate;
@@ -95,8 +105,7 @@
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    opacity: 0.18;
-    mix-blend-mode: overlay;
+    opacity: 0.07;
     border-radius: inherit;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
