@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanTranscript, transcribe } from "@/lib/ai/stt";
+import { cleanTranscript, sttInstruction, transcribe } from "@/lib/ai/stt";
 
 describe("cleanTranscript", () => {
   it("keeps spoken words", () => expect(cleanTranscript("  Hi, about the invoice. \n")).toBe("Hi, about the invoice."));
@@ -25,14 +25,26 @@ describe("transcribe", () => {
       .mockResolvedValueOnce(Response.json({ candidates: [{ content: { parts: [{ text: "Hello there" }] } }] }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(transcribe(Buffer.from("RIFFxxxx"), "audio/wav", "en-US")).resolves.toBe("Hello there");
+    await expect(transcribe(Buffer.from("RIFFxxxx"), "audio/wav", { language: "en", locale: "en-US" })).resolves.toBe("Hello there");
     expect(fetchMock.mock.calls[1][0]).toContain("model-b");
     const body = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(body.contents[0].parts[1].inlineData.mimeType).toBe("audio/wav");
+    expect(body.contents[0].parts[0].inlineData.mimeType).toBe("audio/wav");
   });
 
   it("fails with config when the key is missing", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
-    await expect(transcribe(Buffer.from("x"), "audio/wav", "en-US")).rejects.toMatchObject({ code: "config" });
+    await expect(transcribe(Buffer.from("x"), "audio/wav", { language: "en", locale: "en-US" })).rejects.toMatchObject({ code: "config" });
+  });
+});
+
+describe("sttInstruction", () => {
+  it("keeps Hinglish in Roman script without translating", () => {
+    const p = sttInstruction({ language: "hinglish", locale: "en-IN" });
+    expect(p).toMatch(/Roman/);
+    expect(p).toMatch(/Never translate Hindi/);
+    expect(p).toMatch(/Never use Devanagari/);
+  });
+  it("includes the client's last line as context", () => {
+    expect(sttInstruction({ language: "en", locale: "en-US", context: "When can you send the invoice?" })).toContain("send the invoice");
   });
 });

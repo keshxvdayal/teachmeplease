@@ -1,8 +1,13 @@
-// Speech-to-text with Gemini, used when the browser's own speech recognition hears nothing
-// (Safari, Brave, Arc, Firefox, flaky networks, or a mic the browser recognizer can't share).
+// Speech-to-text with Gemini. Every push-to-talk turn is transcribed here: unlike the browser's
+// recognizer, which is locked to one locale, Gemini follows code-switching (Hinglish) and can use
+// what the client just said to tell similar-sounding words apart.
+
+import { getLanguage } from "@/lib/config/languages";
+import { thinkingConfigFor } from "./gemini";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const TIMEOUT_MS = 15_000;
+// Per model; a slow model gives way to the next one.
+const TIMEOUT_MS = 8_000;
 
 export class SttError extends Error {
   constructor(
@@ -22,42 +27,74 @@ function sttModels(): string[] {
   return [...new Set(list.map((m) => m.trim()).filter(Boolean))];
 }
 
-export function sttPrompt(locale: string): string {
+/** How to write the words down, per conversation language. */
+function scriptRules(language: string, locale: string): string {
+  switch (language) {
+    case "hinglish":
+      return [
+        "The speaker talks in Hinglish: Hindi and English mixed freely, often within one sentence.",
+        "Write every word exactly as spoken. English words stay in English. Hindi words are written in Roman (Latin) script the way Indians type them in chat,",
+        "e.g. 'haan', 'nahi', 'kya', 'thoda', 'kal tak', 'ho jayega', 'aap', 'mujhe', 'paise', 'bhaiya', 'theek hai'.",
+        "Never translate Hindi into English. Never replace a Hindi word with a similar-sounding English word. Never use Devanagari.",
+      ].join(" ");
+    case "hi":
+      return [
+        "The speaker talks in Hindi and may use English words, as Indian professionals do.",
+        "Write Hindi words in Devanagari. Keep English words (invoice, deadline, project…) in English as spoken. Never translate.",
+      ].join(" ");
+    case "en":
+      return [
+        `The speaker talks in English (${locale}), possibly with an Indian or other regional accent, and may drop in words from another language.`,
+        "Write English words in standard spelling. If a non-English word is spoken (e.g. Hindi 'haan', 'acha', 'ji'), write it as spoken in Roman script; never swap it for a similar-sounding English word.",
+      ].join(" ");
+    default: {
+      const label = getLanguage(language)?.label ?? locale;
+      return `The speaker talks in ${label} (${locale}) and may use some English words. Write ${label} in its standard script and keep English words in English as spoken. Never translate.`;
+    }
+  }
+}
+
+export function sttInstruction(opts: { language: string; locale: string; context?: string }): string {
   return [
-    `Transcribe this recording of one person speaking on a phone call. Expected language: ${locale}.`,
-    "Write exactly the words spoken, in the language spoken, with normal punctuation.",
-    "Output only the transcript, with no quotes, labels or commentary.",
-    "If there is no intelligible speech, output exactly: [silence]",
-  ].join(" ");
+    "You are a precise speech-to-text engine. Transcribe the attached recording of one person speaking on a phone call.",
+    scriptRules(opts.language, opts.locale),
+    opts.context
+      ? `For context only, the other person on the call just said: «${opts.context}». Use it to tell apart similar-sounding words and names; never copy words from it that weren't spoken.`
+      : "",
+    "Transcribe verbatim but clean: keep every meaningful word, drop 'um'/'uh' and stutters, add normal punctuation. Do not fix grammar, summarize, answer or add anything.",
+    "Output only the transcript. If there is no intelligible speech, output exactly: [silence]",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** Cleans the model's answer; "" when it heard nothing. */
 export function cleanTranscript(raw: string): string {
   const text = raw
     .replace(/^\s*(transcript|transcription)\s*:\s*/i, "")
-    .replace(/^["“]|["”]$/g, "")
+    .replace(/^["“«]|["”»]$/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return /^\[?\s*(silence|no speech|inaudible)\s*\]?\.?$/i.test(text) ? "" : text;
 }
 
 /** Transcribes a short clip. Tries each configured model in turn. */
-export async function transcribe(audio: Buffer, mimeType: string, locale: string): Promise<string> {
+export async function transcribe(
+  audio: Buffer,
+  mimeType: string,
+  opts: { language: string; locale: string; context?: string },
+): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new SttError("config", "GEMINI_API_KEY is not set");
 
-  const body = JSON.stringify({
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: sttPrompt(locale) }, { inlineData: { mimeType, data: audio.toString("base64") } }],
-      },
-    ],
-    generationConfig: { temperature: 0, maxOutputTokens: 2048 },
-  });
-
   let lastError: SttError = new SttError("unavailable", "No speech-to-text model is available");
   for (const model of sttModels()) {
+    const thinking = thinkingConfigFor(model, 0);
+    const body = JSON.stringify({
+      systemInstruction: { parts: [{ text: sttInstruction(opts) }] },
+      contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: audio.toString("base64") } }, { text: "Transcribe this." }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 4096, ...(thinking && { thinkingConfig: thinking }) },
+    });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {

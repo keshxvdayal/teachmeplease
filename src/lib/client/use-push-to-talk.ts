@@ -48,6 +48,8 @@ const SILENT_PEAK = 0.02;
 // Server transcription gets at most a minute of audio.
 const MAX_UPLOAD_SECONDS = 60;
 const STT_SAMPLE_RATE = 16_000;
+// How long to wait for the server's transcript before using the browser's.
+const STT_TIMEOUT_MS = 12_000;
 
 /**
  * Hold-to-talk. While the button is held, the browser's speech recognition listens (fast, free)
@@ -55,7 +57,18 @@ const STT_SAMPLE_RATE = 16_000;
  * connection, or a mic the recognizer can't use — the recording is transcribed on the server.
  * The whole turn's transcript is then passed to `onUserTurn` ("" with a reason if nothing was said).
  */
-export function usePushToTalk(locale: string, onUserTurn: (text: string, speechMs: number, reason?: EmptyTurnReason) => void) {
+export function usePushToTalk(
+  locale: string,
+  onUserTurn: (text: string, speechMs: number, reason?: EmptyTurnReason) => void,
+  opts: {
+    /** Conversation language id (e.g. "hinglish"), so the transcript uses the right script. */
+    language: string;
+    /** What the client last said: helps tell similar-sounding words apart. */
+    context?: () => string | undefined;
+  },
+) {
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
   const [available, setAvailable] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -198,46 +211,52 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
       if (connectedRef.current) onUserTurnRef.current(words, speechMs, words ? undefined : reason);
     };
 
-    if (text) {
-      stopRecording();
-      return deliver(text);
-    }
-    if (speechMs < MIN_SPEECH_MS) {
+    // Nothing was recorded (old browser): the browser's words are all there is.
+    if (!recording) return deliver(text, speechMs < MIN_SPEECH_MS ? "short" : "unclear");
+    if (!text && speechMs < MIN_SPEECH_MS) {
       stopRecording();
       return deliver("", "short");
     }
-    if (meterWorks() && peakRef.current < SILENT_PEAK) {
+    if (!text && meterWorks() && peakRef.current < SILENT_PEAK) {
       stopRecording();
       return deliver("", "silent");
     }
-    if (!recording) return deliver("", "unclear");
 
-    // The browser heard nothing: transcribe the recording on the server instead.
+    // Gemini transcribes the recording: it follows Hinglish and other mixed speech that the
+    // browser's single-locale recognizer turns into wrong English words. The browser's text is
+    // only the live preview, and the backup if the server can't answer in time.
     setTranscribing(true);
     const ac = new AbortController();
     sttAbortRef.current = ac;
+    const timeout = setTimeout(() => ac.abort(), STT_TIMEOUT_MS);
     void (async () => {
+      let heard: string | null = null;
       try {
         const blob = await Promise.race([recording, new Promise<null>((r) => setTimeout(() => r(null), 3000))]);
-        if (ac.signal.aborted) return;
-        if (!blob || blob.size < 500) return deliver("", "unclear");
-        const body = await toWav(blob).catch(() => blob);
-        const res = await fetch(`/api/stt?lang=${encodeURIComponent(localeRef.current)}`, {
-          method: "POST",
-          headers: { "Content-Type": body.type.split(";")[0] || "audio/webm" },
-          body,
-          signal: ac.signal,
-        });
-        if (ac.signal.aborted) return;
-        if (!res.ok) return deliver("", "failed");
-        const { text: heard } = (await res.json()) as { text?: string };
-        if (ac.signal.aborted) return;
-        deliver((heard ?? "").trim(), "unclear");
+        if (blob && blob.size >= 500) {
+          const audio = await toWav(blob).catch(() => blob);
+          const form = new FormData();
+          form.append("audio", audio, audio.type.includes("wav") ? "turn.wav" : "turn.webm");
+          form.append("lang", localeRef.current);
+          form.append("language", optsRef.current.language);
+          const context = optsRef.current.context?.();
+          if (context) form.append("context", context);
+          const res = await fetch("/api/stt", { method: "POST", body: form, signal: ac.signal });
+          if (res.ok) heard = (((await res.json()) as { text?: string }).text ?? "").trim();
+        } else {
+          heard = "";
+        }
       } catch {
-        if (!ac.signal.aborted) deliver("", "failed");
+        /* falls back below */
       } finally {
-        if (sttAbortRef.current === ac) sttAbortRef.current = null;
+        clearTimeout(timeout);
       }
+      // Hung up meanwhile.
+      if (!connectedRef.current || sttAbortRef.current !== ac) return;
+      sttAbortRef.current = null;
+      if (heard) deliver(heard);
+      else if (text) deliver(text);
+      else deliver("", heard === null ? "failed" : "unclear");
     })();
   }, []);
 
@@ -258,6 +277,9 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
       // No browser recognizer (e.g. Firefox): the recording alone is transcribed on the server.
       if (!Ctor) return recorderRef.current ? undefined : fail("unsupported");
       const isAndroid = /android/i.test(navigator.userAgent);
+      // Android can't share the mic between the recording and its recognizer; the recording
+      // (transcribed by Gemini) is the more accurate of the two, so it wins.
+      if (isAndroid && recorderRef.current) return;
       let restarts = 0;
       // Set when the browser's recognizer can't work here (Brave, offline, unsupported language);
       // the recording takes over, so it isn't restarted.
@@ -357,12 +379,8 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
     setConnecting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      // Android can't share the mic between this stream and the browser's recognizer.
-      if (/android/i.test(navigator.userAgent) && Ctor) stream.getTracks().forEach((t) => t.stop());
-      else {
-        streamRef.current = stream;
-        startMeter(stream);
-      }
+      streamRef.current = stream;
+      startMeter(stream);
       setLive(true);
     } catch (err) {
       const name = (err as Error).name;
@@ -408,8 +426,9 @@ export function usePushToTalk(locale: string, onUserTurn: (text: string, speechM
     stopRecording(RECORD_TAIL_MS);
     const turn = turnRef.current;
     const rec = recRef.current;
-    // Everything heard is already final: send straight away rather than wait for the browser.
-    if (finalRef.current && !interimRef.current) {
+    // With a recording, Gemini does the transcript, so there's no need to wait for the browser's
+    // last words; without one, send straight away once everything heard is final.
+    if (recordingRef.current || (finalRef.current && !interimRef.current)) {
       finish(turn);
       return;
     }

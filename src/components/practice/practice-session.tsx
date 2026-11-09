@@ -140,14 +140,20 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
   });
   // Hold-to-talk with the browser's speech recognition. Each turn goes through the same API as
   // typed replies, so mood, patience, the end of the call and feedback work the same way.
-  const ptt = usePushToTalk(speechLocale, (text, speechMs, reason) => {
-    if (!text) {
-      setVoiceNotice(EMPTY_TURN_NOTICES[reason ?? "unclear"]);
-      return;
-    }
-    setVoiceNotice(null);
-    void submit(text, uuid(), "voice", speechMs);
-  });
+  const lastClientLineRef = useRef<string | undefined>(undefined);
+  lastClientLineRef.current = session.messages.findLast((m) => m.speaker === "ai")?.text;
+  const ptt = usePushToTalk(
+    speechLocale,
+    (text, speechMs, reason) => {
+      if (!text) {
+        setVoiceNotice(EMPTY_TURN_NOTICES[reason ?? "unclear"]);
+        return;
+      }
+      setVoiceNotice(null);
+      void submit(text, uuid(), "voice", speechMs);
+    },
+    { language: session.language, context: () => lastClientLineRef.current },
+  );
   /** Talking over the client stops them, like on a real call. */
   const pressTalk = useCallback(() => {
     tts.stop();
@@ -958,21 +964,16 @@ export function PracticeSession({ initial, ttsLocale, maxChars }: { initial: Ses
 
           {!started ? (
             <div className="pb-3 text-center">
-              <p className="font-display text-lg font-bold">How do you want to practice?</p>
+              <p className="font-display text-lg font-bold">Ready when you are</p>
               <p className="mt-1 text-xs text-muted">
-                {voiceAvailable
-                  ? "A voice call feels closest to the real thing. You can switch at any time."
-                  : "Voice calls need a browser with speech support, such as Chrome. Typing works everywhere."}
+                {ptt.available === false
+                  ? "Voice calls need a browser with microphone access, such as Chrome, Edge or Safari."
+                  : "Hold the mic (or Space) while you talk, and let go to send."}
               </p>
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-center">
-                {voiceAvailable && (
-                  <Button size="lg" onClick={() => startCall(true)}>
-                    <Phone className="size-4" aria-hidden />
-                    {session.scenario.callDirection === "incoming" ? `Take ${persona.split(" ")[0]}'s call` : `Call ${persona.split(" ")[0]}`}
-                  </Button>
-                )}
-                <Button size="lg" variant={voiceAvailable ? "secondary" : "primary"} onClick={() => startCall(false)}>
-                  <Keyboard className="size-4" aria-hidden /> {voiceAvailable ? "Type instead" : "Start typing"}
+              <div className="mt-3 flex justify-center">
+                <Button size="lg" onClick={() => startCall(true)} disabled={!voiceAvailable}>
+                  <Phone className="size-4" aria-hidden />
+                  {session.scenario.callDirection === "incoming" ? `Take ${persona.split(" ")[0]}'s call` : `Call ${persona.split(" ")[0]}`}
                 </Button>
               </div>
             </div>

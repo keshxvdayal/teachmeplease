@@ -56,7 +56,7 @@ export const conversationLanguages: LanguageOption[] = [
     promptInstruction:
       "Speak in Hinglish: natural Hindi–English code-switching as used in Indian workplaces, written in Roman (Latin) script only, never Devanagari. Mix freely, e.g. 'Budget thoda tight hai, but let's see kya ho sakta hai.'",
     fallbackLine: "Sorry, main samjha nahi. Kya hum point pe wapas aa sakte hain?",
-    note: "Speech recognition may mis-hear mixed Hindi and English. Check the text before sending.",
+    note: "Speak naturally, mixing Hindi and English. Your words are written in Roman script.",
   },
   {
     id: "hi",
